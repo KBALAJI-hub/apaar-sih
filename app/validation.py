@@ -97,16 +97,17 @@ def rule_r4_duplicate_within_institution(
 def rule_r5_cross_institution_duplicate(
     apaar_id: str,
     institution_id: int,
-    all_active_fulltime_apaars: Dict[str, int],
+    all_active_fulltime_apaars: Dict[str, Set[int]],
 ) -> Optional[Dict[str, str]]:
     """R5: Same APAAR actively enrolled full-time at another institution (HIGH)."""
     apaar_str = str(apaar_id)
-    other_inst_id = all_active_fulltime_apaars.get(apaar_str)
-    if other_inst_id is not None and other_inst_id != institution_id:
+    other_institutions = all_active_fulltime_apaars.get(apaar_str, set()) - {institution_id}
+    if other_institutions:
+        institution_list = ", ".join(str(inst_id) for inst_id in sorted(other_institutions))
         return {
             "rule_code": "R5",
             "severity": "HIGH",
-            "message": f"APAAR ID '{apaar_str}' is concurrently enrolled full-time at another institution (ID: {other_inst_id}).",
+            "message": f"APAAR ID '{apaar_str}' is concurrently enrolled full-time at another institution (ID: {institution_list}).",
             "recommended_action": "Flag for AICTE cross-verification and obtain migration/clearance certificate.",
         }
     return None
@@ -278,7 +279,9 @@ def build_validation_context(institution_id: int, session: Session) -> Dict[str,
         select(Student.apaar_id, Student.institution_id)
         .where(Student.mode == "FULL_TIME", Student.status == "ACTIVE")
     ).all()
-    all_active_fulltime_apaars = {s[0]: s[1] for s in all_ft_students}
+    all_active_fulltime_apaars: Dict[str, Set[int]] = {}
+    for apaar_id, active_institution_id in all_ft_students:
+        all_active_fulltime_apaars.setdefault(apaar_id, set()).add(active_institution_id)
 
     return {
         "institution_id": institution_id,
