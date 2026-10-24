@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-4 border-b border-gray-200">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Enrolled Students</h1>
+            <p class="text-sm text-gray-500">Student enrollment records and APAAR identity verification status</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <a href="/institution/upload" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 shadow-sm transition">
+                <svg class="w-4 h-4 mr-1.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                Upload CSV
+            </a>
+            <a href="/institution/students/new" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                Add Student
+            </a>
+        </div>
+    </div>
+
+    <!-- Search & Filters Form -->
+    <div class="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+        <form method="GET" action="/institution/students" class="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+            <div class="sm:col-span-6">
+                <input type="text" name="q" value="{{ search_query or '' }}" placeholder="Search by Student Name, Roll No, or 12-digit APAAR ID..."
+                       class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+            </div>
+            <div class="sm:col-span-4">
+                <select name="program_id" class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <option value="">All Academic Programs</option>
+                    {% for p in programs %}
+                    <option value="{{ p.id }}" {% if selected_program_id == p.id %}selected{% endif %}>
+                        {{ p.name }} ({{ p.academic_year }})
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="sm:col-span-2 flex items-center gap-2">
+                <button type="submit" class="w-full px-4 py-2 bg-gray-900 hover:bg-gray-800 text-white rounded-lg text-sm font-medium transition">
+                    Filter
+                </button>
+                {% if search_query or selected_program_id %}
+                <a href="/institution/students" class="px-3 py-2 text-gray-500 hover:text-gray-700 text-sm">Clear</a>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+
+    <!-- Students Table -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-6 py-3 border-b border-gray-200 flex items-center justify-between bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+            <span>Showing {{ students|length }} Student Records</span>
+            <span>Institution Restricted</span>
+        </div>
+        {% if students %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50 text-gray-600">
+                    <tr>
+                        <th class="px-6 py-3 text-left font-semibold">Roll No</th>
+                        <th class="px-6 py-3 text-left font-semibold">Student Name</th>
+                        <th class="px-6 py-3 text-left font-semibold">APAAR ID</th>
+                        <th class="px-6 py-3 text-left font-semibold">Program</th>
+                        <th class="px-6 py-3 text-left font-semibold">Admission</th>
+                        <th class="px-6 py-3 text-left font-semibold">Consent</th>
+                        <th class="px-6 py-3 text-left font-semibold">Flags</th>
+                        <th class="px-6 py-3 text-right font-semibold">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for stu in students %}
+                    <tr class="hover:bg-gray-50 transition">
+                        <td class="px-6 py-3.5 font-mono text-gray-900 font-medium">{{ stu.student_id }}</td>
+                        <td class="px-6 py-3.5 font-medium text-gray-900">
+                            {{ stu.full_name }}
+                            <div class="text-xs text-gray-400 font-normal">DOB: {{ stu.dob }} &bull; {{ stu.gender }}</div>
+                        </td>
+                        <td class="px-6 py-3.5 font-mono text-indigo-700">{{ stu.apaar_id }}</td>
+                        <td class="px-6 py-3.5 text-gray-600 text-xs">
+                            {{ programs_map.get(stu.program_id, 'Program ' ~ stu.program_id) }}
+                            <div class="text-gray-400">Year: {{ stu.admission_year }}</div>
+                        </td>
+                        <td class="px-6 py-3.5 text-xs">
+                            <span class="inline-block px-2 py-0.5 rounded {% if stu.admission_type == 'SUPERNUMERARY' %}bg-purple-100 text-purple-800{% else %}bg-gray-100 text-gray-800{% endif %}">
+                                {{ stu.admission_type }}
+                            </span>
+                            {% if stu.is_nri %}<span class="inline-block ml-1 px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[10px]">NRI</span>{% endif %}
+                        </td>
+                        <td class="px-6 py-3.5 text-xs">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium {% if stu.consent_level == 2 %}bg-green-100 text-green-800{% elif stu.consent_level == 1 %}bg-blue-100 text-blue-800{% else %}bg-gray-100 text-gray-600{% endif %}">
+                                Tier {{ stu.consent_level }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-3.5">
+                            {% set flag_count = flags_by_student.get(stu.id, 0) %}
+                            {% if flag_count > 0 %}
+                            <span class="badge-high text-xs px-2 py-0.5">{{ flag_count }} Flag(s)</span>
+                            {% else %}
+                            <span class="text-emerald-600 text-xs font-medium">&check; Clean</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-3.5 text-right whitespace-nowrap">
+                            <a href="/institution/students/{{ stu.id }}/edit" class="text-indigo-600 hover:text-indigo-900 font-medium text-xs">
+                                Edit
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-12 text-center text-gray-500">
+            <p class="text-base font-medium text-gray-900">No students found matching your criteria</p>
+            <p class="text-xs text-gray-500 mt-1">Try resetting search filters or add a new student record.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

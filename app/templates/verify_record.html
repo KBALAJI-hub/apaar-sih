@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="text-center space-y-1 pb-2">
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+            AICTE National Verification Gateway
+        </span>
+        <h1 class="text-2xl font-extrabold text-gray-900 tracking-tight">Student Credential Verification</h1>
+        <p class="text-xs text-gray-500">Public Ed25519 cryptographic authenticity verification (SIH PS 26263)</p>
+    </div>
+
+    <!-- Main Card -->
+    {% if is_authentic %}
+    <div class="bg-white rounded-2xl border-2 border-emerald-500/80 shadow-lg overflow-hidden">
+        <!-- Verification Banner (Green) -->
+        <div class="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-5 text-white flex items-center justify-between">
+            <div class="flex items-center gap-3.5">
+                <div class="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0 border border-white/30">
+                    <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
+                </div>
+                <div>
+                    <div class="text-xl font-black tracking-wide uppercase">Authentic record</div>
+                    <div class="text-xs text-emerald-100">Cryptographically verified against AICTE Root Public Key</div>
+                </div>
+            </div>
+            <span class="px-2.5 py-1 rounded-md text-xs font-bold bg-white text-emerald-800 shadow-sm">VERIFIED</span>
+        </div>
+
+        <!-- Minimal Info Only -->
+        <div class="p-6 sm:p-8 space-y-6">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-6 text-sm">
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Student Name</div>
+                    <div class="font-bold text-gray-900 text-base mt-0.5">{{ student.full_name }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Institution Roll ID</div>
+                    <div class="font-mono font-semibold text-gray-800 mt-0.5">{{ student.student_id }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">AICTE Affiliated Institution</div>
+                    <div class="font-semibold text-gray-900 mt-0.5">{{ institution.name if institution else 'N/A' }}</div>
+                    <div class="text-xs text-gray-500 font-mono">AIC-ID: {{ institution.aicte_id if institution else '' }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Academic Program</div>
+                    <div class="font-semibold text-gray-900 mt-0.5">{{ program.name if program else 'N/A' }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Admission Year</div>
+                    <div class="font-semibold text-gray-800 mt-0.5">{{ student.admission_year }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Enrollment Status</div>
+                    <div class="mt-0.5">
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            {{ student.status }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cryptographic Assurance Footer -->
+            <div class="pt-5 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-gray-500">
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                    <span>Algorithm: <strong class="text-gray-700">Ed25519 (RFC 8032)</strong></span>
+                </div>
+                <a href="/.well-known/aicte-public-key.pem" target="_blank" class="text-indigo-600 hover:text-indigo-800 font-medium underline inline-flex items-center gap-1">
+                    Download AICTE Root Public Key &rarr;
+                </a>
+            </div>
+        </div>
+    </div>
+
+    {% else %}
+    <!-- Tampered or Not Found Card (Red) -->
+    <div class="bg-white rounded-2xl border-2 border-red-500/80 shadow-lg overflow-hidden">
+        <div class="bg-gradient-to-r from-red-600 to-rose-600 px-6 py-5 text-white flex items-center justify-between">
+            <div class="flex items-center gap-3.5">
+                <div class="w-12 h-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0 border border-white/30">
+                    <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </div>
+                <div>
+                    <div class="text-xl font-black tracking-wide uppercase">TAMPERED or not found</div>
+                    <div class="text-xs text-red-100">Cryptographic signature verification failed or student not found</div>
+                </div>
+            </div>
+            <span class="px-2.5 py-1 rounded-md text-xs font-bold bg-white text-red-800 shadow-sm">FAILED</span>
+        </div>
+
+        <div class="p-6 sm:p-8 space-y-4">
+            <div class="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800">
+                <div class="font-bold">Verification Warning:</div>
+                <p class="mt-1 text-xs text-red-700 leading-relaxed">
+                    {{ failure_message or "The cryptographic signature does not match the canonical student record, or the student ID does not exist in the AICTE national registry. This credential cannot be verified as authentic." }}
+                </p>
+            </div>
+            <div class="text-xs text-gray-500 pt-2 flex items-center justify-between">
+                <span>Queried Reference: <strong class="font-mono text-gray-700">{{ requested_id }}</strong></span>
+                <a href="/" class="text-indigo-600 hover:text-indigo-800 font-medium">&larr; Return to Home</a>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

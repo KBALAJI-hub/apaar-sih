@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="text-center space-y-1 pb-2">
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+            DigiLocker Consent Gateway
+        </span>
+        <h1 class="text-2xl font-extrabold text-gray-900 tracking-tight">Student Privacy & Consent Portal</h1>
+        <p class="text-xs text-gray-500">Manage third-party verification access & view lookup audit trails</p>
+    </div>
+
+    <!-- Alert / Message -->
+    {% if error %}
+    <div class="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800 flex items-start gap-3">
+        <svg class="w-5 h-5 text-red-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        <div>
+            <div class="font-bold">Verification Error</div>
+            <div class="text-xs mt-0.5">{{ error }}</div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if success %}
+    <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-800 flex items-start gap-3">
+        <svg class="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+        <div>
+            <div class="font-bold">Preferences Saved</div>
+            <div class="text-xs mt-0.5">{{ success }}</div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not student %}
+    <!-- Step 1: Simulated DigiLocker OTP Login -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 sm:p-8 space-y-6">
+        <div class="border-b border-gray-100 pb-4">
+            <h2 class="text-base font-bold text-gray-900">Authenticate with DigiLocker</h2>
+            <p class="text-xs text-gray-500 mt-1">Enter your 12-digit APAAR ID and the simulated OTP sent to your registered mobile.</p>
+        </div>
+
+        <form method="POST" action="/student/consent" class="space-y-5">
+            <input type="hidden" name="action" value="login">
+            <div>
+                <label for="apaar_id" class="block text-sm font-semibold text-gray-900 mb-1">
+                    APAAR ID (12 Digits) *
+                </label>
+                <input type="text" id="apaar_id" name="apaar_id" maxlength="12" pattern="\d{12}" required
+                       value="{{ apaar_id or '' }}"
+                       placeholder="e.g. 100000000001"
+                       class="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+            </div>
+
+            <div>
+                <label for="otp" class="block text-sm font-semibold text-gray-900 mb-1">
+                    simulated DigiLocker OTP *
+                </label>
+                <div class="relative">
+                    <input type="text" id="otp" name="otp" required maxlength="6"
+                           value="123456"
+                           placeholder="Enter 6-digit OTP"
+                           class="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm font-mono tracking-widest text-center focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                </div>
+                <p class="text-xs text-emerald-700 mt-1.5 flex items-center gap-1 font-medium">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Demo OTP is preset to: <span class="font-mono font-bold">123456</span>
+                </p>
+            </div>
+
+            <button type="submit" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold shadow-sm transition">
+                Authenticate & Access Consent Settings &rarr;
+            </button>
+        </form>
+    </div>
+
+    {% else %}
+    <!-- Step 2: Authenticated Student Privacy & Consent Management -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 sm:p-8 space-y-6">
+        <!-- Student Identity Badge -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-gray-50 border border-gray-200">
+            <div>
+                <div class="text-xs text-gray-400 font-semibold uppercase">Enrolled Student</div>
+                <div class="text-lg font-extrabold text-gray-900">{{ student.full_name }}</div>
+                <div class="text-xs text-gray-600 font-mono mt-0.5">
+                    APAAR: <span class="font-semibold text-indigo-700">{{ student.apaar_id }}</span> &bull; Roll: {{ student.student_id }}
+                </div>
+            </div>
+            <div class="sm:text-right">
+                <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold {% if student.consent_level == 2 %}bg-emerald-100 text-emerald-800 border border-emerald-300{% elif student.consent_level == 1 %}bg-blue-100 text-blue-800 border border-blue-300{% else %}bg-amber-100 text-amber-800 border border-amber-300{% endif %}">
+                    Tier {{ student.consent_level }}: {% if student.consent_level == 2 %}Full Record & QR{% elif student.consent_level == 1 %}Directory Only{% else %}Consent Withheld{% endif %}
+                </span>
+            </div>
+        </div>
+
+        <!-- Consent Level Update Form -->
+        <form method="POST" action="/student/consent" class="space-y-4">
+            <input type="hidden" name="action" value="update_consent">
+            <input type="hidden" name="apaar_id" value="{{ student.apaar_id }}">
+
+            <div class="font-bold text-sm text-gray-900">Select Verification Disclosure Level:</div>
+
+            <div class="space-y-3">
+                <!-- Tier 2 -->
+                <label class="flex items-start gap-3 p-3.5 rounded-lg border {% if student.consent_level == 2 %}border-emerald-500 bg-emerald-50/30 ring-1 ring-emerald-500{% else %}border-gray-200 hover:bg-gray-50{% endif %} cursor-pointer transition">
+                    <input type="radio" name="consent_level" value="2" {% if student.consent_level == 2 %}checked{% endif %} class="mt-1 text-emerald-600 focus:ring-emerald-500">
+                    <div>
+                        <div class="text-sm font-bold text-gray-900">Tier 2: Full Record & Authenticity Badge (Recommended)</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Authorizes verifiers to view your full academic credential, personal details, official AICTE cryptographic badge, and verification QR code.</div>
+                    </div>
+                </label>
+
+                <!-- Tier 1 -->
+                <label class="flex items-start gap-3 p-3.5 rounded-lg border {% if student.consent_level == 1 %}border-blue-500 bg-blue-50/30 ring-1 ring-blue-500{% else %}border-gray-200 hover:bg-gray-50{% endif %} cursor-pointer transition">
+                    <input type="radio" name="consent_level" value="1" {% if student.consent_level == 1 %}checked{% endif %} class="mt-1 text-blue-600 focus:ring-blue-500">
+                    <div>
+                        <div class="text-sm font-bold text-gray-900">Tier 1: Directory Verification Only</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Discloses only your affiliated institution, degree program, admission year, and status. Personal attributes (name, DOB, gender) and QR badges are withheld.</div>
+                    </div>
+                </label>
+
+                <!-- Tier 0 -->
+                <label class="flex items-start gap-3 p-3.5 rounded-lg border {% if student.consent_level == 0 %}border-amber-500 bg-amber-50/30 ring-1 ring-amber-500{% else %}border-gray-200 hover:bg-gray-50{% endif %} cursor-pointer transition">
+                    <input type="radio" name="consent_level" value="0" {% if student.consent_level == 0 %}checked{% endif %} class="mt-1 text-amber-600 focus:ring-amber-500">
+                    <div>
+                        <div class="text-sm font-bold text-gray-900">Tier 0: Revoke All Consent</div>
+                        <div class="text-xs text-gray-500 mt-0.5">Completely blocks third-party verifiers. Verifiers will only see "APAAR valid, student has not consented to share details".</div>
+                    </div>
+                </label>
+            </div>
+
+            <div class="pt-2 flex justify-end">
+                <button type="submit" class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-semibold shadow-sm transition">
+                    Save Consent Preferences
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- "Who Looked Me Up" Access Audit Trail -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+            <div>
+                <h3 class="text-sm font-bold text-gray-900">Who looked me up (Access History)</h3>
+                <p class="text-xs text-gray-500">Audit trail of all third-party and employer verification requests from VerificationLog</p>
+            </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-200 text-gray-700">
+                {{ lookups|length }} Events
+            </span>
+        </div>
+
+        {% if lookups %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-xs">
+                <thead class="bg-gray-50 text-gray-600">
+                    <tr>
+                        <th class="px-4 py-3 text-left font-semibold">Timestamp (UTC)</th>
+                        <th class="px-4 py-3 text-left font-semibold">Verifier Identity</th>
+                        <th class="px-4 py-3 text-left font-semibold">Tier Disclosed</th>
+                        <th class="px-4 py-3 text-left font-semibold">Verification Result</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for log in lookups %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-3 font-mono text-gray-600">{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') if log.timestamp else 'N/A' }}</td>
+                        <td class="px-4 py-3 font-medium text-gray-900">
+                            {% if log.verifier_id %}
+                                Verifier User #{{ log.verifier_id }}
+                            {% else %}
+                                Third-Party / Public Verifier
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3">
+                            {% if log.tier_shown == 2 %}
+                                <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800">Tier 2: Full Record</span>
+                            {% elif log.tier_shown == 1 %}
+                                <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-100 text-blue-800">Tier 1: Directory</span>
+                            {% else %}
+                                <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800">Tier 0: Blocked</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3">
+                            <span class="font-mono font-bold {% if log.result == 'VALID' %}text-emerald-700{% elif log.result == 'TAMPERED' %}text-red-700{% else %}text-amber-700{% endif %}">
+                                {{ log.result }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-8 text-center text-gray-400 text-xs">
+            No verification lookups have been performed for your APAAR ID yet.
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

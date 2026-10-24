@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="space-y-6 max-w-5xl mx-auto">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-4 border-b border-gray-200">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Upload Validation Results</h1>
+            <p class="text-sm text-gray-500">Automated AICTE compliance report and batch processing summary</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <a href="/institution/upload" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition">
+                Upload Another File
+            </a>
+            <a href="/institution/students" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition">
+                View Enrolled Students &rarr;
+            </a>
+        </div>
+    </div>
+
+    <!-- 4 Outcome Summary Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <!-- Total Rows -->
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+            <div class="text-xs font-semibold text-gray-500 uppercase">Processed Rows</div>
+            <div class="mt-2 text-2xl font-extrabold text-gray-900">{{ total_rows }}</div>
+            <div class="mt-1 text-xs text-gray-400">Total records in CSV</div>
+        </div>
+
+        <!-- Accepted Clean -->
+        <div class="bg-white p-5 rounded-xl border border-emerald-200 shadow-sm bg-emerald-50/20">
+            <div class="text-xs font-semibold text-emerald-700 uppercase">Accepted Clean</div>
+            <div class="mt-2 text-2xl font-extrabold text-emerald-600">{{ accepted_clean_count }}</div>
+            <div class="mt-1 text-xs text-emerald-600">Saved with zero flags</div>
+        </div>
+
+        <!-- Accepted With Warnings -->
+        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm bg-amber-50/20">
+            <div class="text-xs font-semibold text-amber-700 uppercase">Accepted (Flagged)</div>
+            <div class="mt-2 text-2xl font-extrabold text-amber-600">{{ accepted_warning_count }}</div>
+            <div class="mt-1 text-xs text-amber-600">Saved with review flags</div>
+        </div>
+
+        <!-- Rejected Rows -->
+        <div class="bg-white p-5 rounded-xl border border-red-200 shadow-sm bg-red-50/20">
+            <div class="text-xs font-semibold text-red-700 uppercase">Rejected Rows</div>
+            <div class="mt-2 text-2xl font-extrabold text-red-600">{{ rejected_count }}</div>
+            <div class="mt-1 text-xs text-red-600">Not saved to database</div>
+        </div>
+    </div>
+
+    <!-- Error CSV Download Banner (if rejected > 0) -->
+    {% if has_error_csv %}
+    <div class="p-5 rounded-xl bg-red-50 border border-red-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+            <h3 class="text-base font-bold text-red-900">Download Rejection Report</h3>
+            <p class="text-xs text-red-700 mt-0.5">
+                {{ rejected_count }} row(s) failed critical compliance rules (R1, R2, R9, R11). You can download an annotated error CSV containing exact failure causes to correct and re-upload.
+            </p>
+        </div>
+        <a href="/institution/upload/error-csv" class="shrink-0 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold shadow-sm transition inline-flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            Download Error CSV
+        </a>
+    </div>
+
+    <!-- Rejection Details Preview Table -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+            <h2 class="text-sm font-bold text-gray-900">Rejected Rows Inspection (Showing up to 50)</h2>
+            <span class="badge-high text-xs px-2 py-0.5">{{ rejected_count }} Errors</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-xs">
+                <thead class="bg-gray-50 text-gray-600">
+                    <tr>
+                        <th class="px-4 py-3 text-left font-semibold">Row #</th>
+                        <th class="px-4 py-3 text-left font-semibold">Submitted APAAR</th>
+                        <th class="px-4 py-3 text-left font-semibold">Student Name</th>
+                        <th class="px-4 py-3 text-left font-semibold">Program</th>
+                        <th class="px-4 py-3 text-left font-semibold text-red-700">Rejection Reason(s)</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for row in rejected_rows %}
+                    <tr class="hover:bg-red-50/30 transition">
+                        <td class="px-4 py-3 text-gray-400 font-mono">{{ loop.index }}</td>
+                        <td class="px-4 py-3 font-mono font-medium {% if not row.apaar_id %}text-red-500 italic{% else %}text-gray-900{% endif %}">
+                            {{ row.apaar_id or '(Missing APAAR)' }}
+                        </td>
+                        <td class="px-4 py-3 font-medium text-gray-900">{{ row.full_name or '(Empty)' }}</td>
+                        <td class="px-4 py-3 text-gray-600">{{ row.program_name or '(Empty)' }}</td>
+                        <td class="px-4 py-3 font-medium text-red-700">{{ row.rejection_reason }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-emerald-50 rounded-xl border border-emerald-200 p-8 text-center text-emerald-800">
+        <svg class="w-12 h-12 text-emerald-500 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        <h3 class="text-lg font-bold text-emerald-900">Clean Upload Batch!</h3>
+        <p class="text-sm text-emerald-700 mt-1">All student rows successfully passed mandatory AICTE checks and have been stored.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

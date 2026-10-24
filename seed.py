@@ -24,6 +24,7 @@ from app.models import (
     ValidationFlag,
     utc_now,
 )
+from app.security import sign_record
 
 # Set deterministic random seeds
 random.seed(42)
@@ -430,6 +431,14 @@ def seed_database():
                     consent_timestamp=utc_now(),
                 )
             )
+
+        # Sign all student records with AICTE Ed25519 private key
+        inst_map = {inst.id: inst.aicte_id for inst in institutions}
+        prog_map = {p.id: p.name for prog_list in programs_by_inst.values() for p in prog_list}
+        for s in students:
+            s.aicte_id = inst_map.get(s.institution_id, "")
+            s.program_name = prog_map.get(s.program_id, "")
+            s.record_signature = sign_record(s)
 
         # Save all students
         session.bulk_save_objects(students)
