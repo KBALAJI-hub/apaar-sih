@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.database import create_db_and_tables
+from app.database import create_db_and_tables, check_db_connection
 from app.auth import router as auth_router
 # Import routers from app.routers
 from app.routers import institution, aicte, verify, api
@@ -70,5 +70,7 @@ def read_root(request: Request):
 
 @app.get("/health")
 def health_check():
-    """GET /health route returning status ok."""
-    return {"status": "ok"}
+    """GET /health route returning status and database connectivity."""
+    db_status = check_db_connection()
+    return {"status": "ok", "database": db_status}
+

@@ -75,11 +75,14 @@ class Student(SQLModel, table=True):
     admission_year: int = Field(default=2024)
     mode: str = Field(default="FULL_TIME")  # FULL_TIME / PART_TIME
     status: str = Field(default="ACTIVE")  # ACTIVE / WITHDRAWN / GRADUATED
+    consent_given: bool = Field(default=False)
     consent_level: int = Field(default=1)  # 0: None, 1: Basic, 2: Full
     consent_timestamp: Optional[datetime] = Field(default=None)
     record_signature: Optional[str] = Field(default=None)  # Ed25519 tamper-evident signature
+    record_hash: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
 
 
 class ValidationFlag(SQLModel, table=True):
