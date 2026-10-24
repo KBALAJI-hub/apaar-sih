@@ -35,6 +35,9 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 # Configure Jinja2 templates pointing to app/templates
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 # Register router modules
 app.include_router(auth_router)
 app.include_router(institution.router)
@@ -43,10 +46,25 @@ app.include_router(verify.router)
 app.include_router(api.router)
 
 
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Render friendly HTML error pages for browser requests, or JSON for API clients."""
+    if exc.status_code == 303:
+        headers = dict(exc.headers or {})
+        return RedirectResponse(url=headers.get("Location", "/login"), status_code=303)
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        if exc.status_code == 403:
+            return templates.TemplateResponse(request=request, name="403.html", status_code=403)
+        if exc.status_code == 404:
+            return templates.TemplateResponse(request=request, name="404.html", status_code=404)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
 @app.get("/", response_class=HTMLResponse)
 def read_root(request: Request):
-    """GET / route that renders base.html."""
-    return templates.TemplateResponse(request=request, name="base.html")
+    """GET / route that renders index.html."""
+    return templates.TemplateResponse(request=request, name="index.html")
 
 
 @app.get("/health")

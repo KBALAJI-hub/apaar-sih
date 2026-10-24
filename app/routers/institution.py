@@ -36,6 +36,13 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 ERROR_CSVS: Dict[int, str] = {}
 
 
+@router.get("", response_class=RedirectResponse)
+@router.get("/", response_class=RedirectResponse)
+def institution_root():
+    """Redirect /institution and /institution/ to the dashboard."""
+    return RedirectResponse(url="/institution/dashboard", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 def institution_dashboard(
     request: Request,
