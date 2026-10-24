@@ -42,6 +42,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 app.include_router(auth_router)
 app.include_router(institution.router)
 app.include_router(aicte.router)
+app.include_router(aicte.api_router)
 app.include_router(verify.router)
 app.include_router(api.router)
 
