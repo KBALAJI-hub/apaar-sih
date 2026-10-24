@@ -4,27 +4,16 @@ from io import StringIO
 from pathlib import Path
 from typing import Optional
 
-<<<<<<< HEAD
-from fastapi import APIRouter, Depends, Query, Request, status
-=======
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
->>>>>>> origin/main
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app.anomaly import compliance_score
-<<<<<<< HEAD
-from app.audit import verify_chain
+from app.audit import log_action, verify_chain
 from app.auth import require_role
 from app.database import get_session
-from app.models import AnomalyAlert, AuditLog, Institution, Program, Student, User, ValidationFlag
-=======
-from app.audit import log_action
-from app.auth import require_role
-from app.database import get_session
-from app.models import AnomalyAlert, Institution, Program, Setting, Student, User, ValidationFlag
->>>>>>> origin/main
+from app.models import AnomalyAlert, AuditLog, Institution, Program, Setting, Student, User, ValidationFlag
 
 # Router for AICTE admin portal endpoints
 router = APIRouter(prefix="/aicte", tags=["AICTE"])
