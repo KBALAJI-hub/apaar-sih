@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Login · APAAR Verify{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto bg-white rounded-xl shadow p-8 mt-8">
+  <h1 class="text-2xl font-bold text-indigo-900 mb-1">Sign in</h1>
+  <p class="text-sm text-slate-500 mb-6">AICTE, institution and verifier accounts</p>
+
+  <!-- Error message: P1 passes error="Invalid username or password" -->
+  {% if error %}
+    <div class="mb-4 px-4 py-2 rounded border bg-red-50 border-red-300 text-red-800 text-sm">
+      {{ error }}
+    </div>
+  {% endif %}
+
+  <!-- Field names (username, password) must match P1's POST /login handler -->
+  <form method="post" action="/login" class="space-y-4">
+    <div>
+      <label for="username" class="block text-sm font-medium mb-1">Username</label>
+      <input id="username" name="username" type="text" required autofocus
+             class="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+    </div>
+    <div>
+      <label for="password" class="block text-sm font-medium mb-1">Password</label>
+      <input id="password" name="password" type="password" required
+             class="w-full border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+    </div>
+    <button type="submit"
+            class="w-full bg-indigo-700 hover:bg-indigo-800 text-white font-semibold py-2 rounded">
+      Login
+    </button>
+  </form>
+
+  <p class="text-xs text-slate-500 mt-6 text-center">
+    Student? <a href="/student/consent" class="text-indigo-700 underline">Sign in with APAAR ID and OTP</a>
+  </p>
+</div>
+{% endblock %}
