@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Authentic record · APAAR Verify{% endblock %}
+
+{% block content %}
+<div class="max-w-lg mx-auto bg-white rounded-xl shadow overflow-hidden mt-6">
+  <div class="bg-green-600 text-white text-center py-6">
+    <div class="text-5xl">&#10003;</div>
+    <h1 class="text-2xl font-bold mt-1">Authentic record</h1>
+    <p class="text-sm opacity-90">The digital signature matches. This record has not been altered.</p>
+  </div>
+  <div class="p-6 text-sm">
+    <!-- Minimal information only -->
+    <dl class="grid grid-cols-3 gap-y-2">
+      <dt class="text-slate-500">Institution</dt><dd class="col-span-2">{{ record.institution }}</dd>
+      <dt class="text-slate-500">Program</dt><dd class="col-span-2">{{ record.program }}</dd>
+      <dt class="text-slate-500">Admission year</dt><dd class="col-span-2">{{ record.admission_year }}</dd>
+      <dt class="text-slate-500">Status</dt><dd class="col-span-2">{{ record.status }}</dd>
+    </dl>
+    <p class="text-xs text-slate-400 mt-5">
+      Signed by AICTE (Ed25519). Public key:
+      <a href="/.well-known/aicte-public-key.pem" class="text-indigo-700 underline">/.well-known/aicte-public-key.pem</a>
+    </p>
+  </div>
+</div>
+{% endblock %}

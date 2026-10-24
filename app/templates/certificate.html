@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Certificate · {{ student.full_name }}{% endblock %}
+
+{% block head %}
+<style>
+  @page { size: A4 landscape; margin: 10mm; }
+  @media print {
+    body { background: #fff !important; }
+    main { padding: 0 !important; max-width: none !important; }
+    .cert { box-shadow: none !important; border-width: 6px !important; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="no-print flex justify-end gap-3 mb-4 max-w-4xl mx-auto">
+  <a href="javascript:history.back()" class="border px-4 py-2 rounded text-sm text-slate-600">Back</a>
+  <button type="button" onclick="window.print()"
+          class="bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-semibold px-4 py-2 rounded">
+    Print or Save as PDF
+  </button>
+</div>
+
+<div class="cert max-w-4xl mx-auto bg-white border-8 border-double border-indigo-900 shadow-lg p-10 text-center">
+  <div class="text-xs tracking-widest uppercase text-slate-500">All India Council for Technical Education · APAAR Verified</div>
+  <h1 class="text-3xl font-serif font-bold text-indigo-900 mt-2">{{ institution.name }}</h1>
+  <p class="text-sm text-slate-500">{{ institution.state }} · AICTE ID {{ institution.aicte_id }}</p>
+
+  <div class="my-6 text-slate-600">This is to certify that</div>
+  <div class="text-4xl font-serif font-bold text-slate-900">{{ student.full_name }}</div>
+
+  <div class="my-4 text-slate-600">is enrolled in</div>
+  <div class="text-2xl font-semibold text-indigo-800">{{ program.name }}</div>
+  <div class="text-slate-600 mt-1">Admission year {{ student.admission_year }}</div>
+
+  <!-- Student ID | APAAR ID, shown prominently -->
+  <div class="inline-block mt-6 border-2 border-indigo-900 rounded px-6 py-3">
+    <div class="text-xs uppercase text-slate-500">Student ID &nbsp;|&nbsp; APAAR ID</div>
+    <div class="text-2xl font-mono font-bold text-indigo-900">
+      {{ student.student_id }} &nbsp;|&nbsp; {{ student.apaar_id }}
+    </div>
+  </div>
+
+  <div class="mt-8 flex items-end justify-between text-left">
+    <div class="text-xs text-slate-500 max-w-md">
+      <div class="font-semibold text-slate-700 mb-1">Digital signature (Ed25519)</div>
+      <div class="font-mono break-all">{{ (signature or student.record_signature or '')[:48] }}{% if (signature or student.record_signature or '')|length > 48 %}...{% endif %}</div>
+      <div class="mt-2">Scan the QR code, or open the link below, to check this record's authenticity.</div>
+      <div class="font-mono break-all mt-1">{{ verify_url }}</div>
+    </div>
+    <div class="text-center">
+      {% if qr_src %}
+        <img src="{{ qr_src }}" alt="Verification QR code" class="w-32 h-32 mx-auto">
+      {% else %}
+        <div class="w-32 h-32 border-2 border-dashed flex items-center justify-center text-xs text-slate-400">QR here</div>
+      {% endif %}
+      <div class="text-xs text-slate-500 mt-1">Scan to verify</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

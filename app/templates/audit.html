@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Audit log · APAAR Verify{% endblock %}
+
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-2xl font-bold text-indigo-900">Audit log</h1>
+    <p class="text-xs text-slate-500">Each row stores the hash of the previous row, so any edit or deletion breaks the chain.</p>
+  </div>
+  <button type="button" id="verify-btn" class="bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-semibold px-4 py-2 rounded">
+    Verify integrity
+  </button>
+</div>
+
+<!-- Integrity result (green or red) -->
+<div id="integrity" class="hidden mb-4 px-4 py-3 rounded border text-sm"></div>
+
+
+<!-- Filters -->
+<form method="get" action="/aicte/audit" class="bg-white rounded-xl shadow p-4 mb-4 flex flex-wrap gap-3 items-end">
+  <div>
+    <label for="user" class="block text-xs text-slate-500 mb-1">User</label>
+    <input id="user" name="user" type="text" value="{{ filters.user if filters else '' }}" class="border rounded px-3 py-2 text-sm">
+  </div>
+  <div>
+    <label for="action" class="block text-xs text-slate-500 mb-1">Action</label>
+    <input id="action" name="action" type="text" value="{{ filters.action if filters else '' }}" class="border rounded px-3 py-2 text-sm">
+  </div>
+  <div>
+    <label for="date_from" class="block text-xs text-slate-500 mb-1">From</label>
+    <input id="date_from" name="date_from" type="date" value="{{ filters.date_from if filters else '' }}" class="border rounded px-3 py-2 text-sm">
+  </div>
+  <div>
+    <label for="date_to" class="block text-xs text-slate-500 mb-1">To</label>
+    <input id="date_to" name="date_to" type="date" value="{{ filters.date_to if filters else '' }}" class="border rounded px-3 py-2 text-sm">
+  </div>
+  <button type="submit" class="bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-semibold px-4 py-2 rounded">Filter</button>
+  <a href="/aicte/audit" class="text-sm text-slate-500 underline py-2">Clear</a>
+</form>
+
+<div class="bg-white rounded-xl shadow p-4 overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="text-left text-slate-500 border-b">
+        <th class="py-2 pr-3">#</th><th class="py-2 pr-3">Time</th><th class="py-2 pr-3">User</th>
+        <th class="py-2 pr-3">Action</th><th class="py-2 pr-3">Entity</th><th class="py-2 pr-3">Details</th>
+        <th class="py-2">Hash</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for l in logs or [] %}
+      <tr class="border-b align-top">
+        <td class="py-2 pr-3 text-slate-400">{{ l.id }}</td>
+        <td class="py-2 pr-3 whitespace-nowrap">{{ l.timestamp.strftime('%Y-%m-%d %H:%M:%S') if l.timestamp else '-' }}</td>
+        <td class="py-2 pr-3">{{ l.username }}</td>
+        <td class="py-2 pr-3 font-mono">{{ l.action }}</td>
+        <td class="py-2 pr-3">{{ l.entity }}{% if l.entity_id %} #{{ l.entity_id }}{% endif %}</td>
+        <td class="py-2 pr-3 text-slate-600 max-w-xs break-words">{{ l.details }}</td>
+        <td class="py-2 font-mono text-xs text-slate-400" title="{{ l.row_hash }}">{{ (l.row_hash or '')[:10] }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="py-8 text-center text-slate-400">No audit entries match.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const box = document.getElementById('integrity');
+
+  function showResult(r) {
+    box.classList.remove('hidden', 'bg-green-50', 'border-green-300', 'text-green-800',
+                         'bg-red-50', 'border-red-300', 'text-red-800');
+    if (r.ok) {
+      box.classList.add('bg-green-50', 'border-green-300', 'text-green-800');
+      box.textContent = '\u2713 Chain valid. No audit row has been altered or deleted.' +
+        (r.count !== undefined ? ' (' + r.count + ' rows checked)' : '');
+    } else {
+      box.classList.add('bg-red-50', 'border-red-300', 'text-red-800');
+      box.textContent = '\u2717 Chain BROKEN' +
+        (r.first_broken_id ? ' at row #' + r.first_broken_id : '') + '. The audit log has been tampered with.';
+    }
+  }
+
+  // If the server already passed a result, show it
+
+  document.getElementById('verify-btn').addEventListener('click', async function () {
+    this.disabled = true;
+    try {
+      const res = await fetch('/aicte/audit/verify', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      showResult(await res.json());
+    } catch (e) {
+      box.classList.remove('hidden');
+      box.className = 'mb-4 px-4 py-3 rounded border text-sm bg-amber-50 border-amber-300 text-amber-800';
+      box.textContent = 'Could not run the check (' + e.message + ').';
+    }
+    this.disabled = false;
+  });
+</script>
+{% endblock %}
