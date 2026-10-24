@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Compliance Summary · APAAR Verify{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex items-center justify-between print:hidden">
+  <div>
+    <h1 class="text-2xl font-bold text-indigo-900">AICTE Compliance Summary</h1>
+    <p class="text-sm text-slate-600">Institution enrolment, approved intake, open flags and compliance scores.</p>
+  </div>
+  <button onclick="window.print()" class="rounded bg-indigo-700 px-4 py-2 font-semibold text-white">
+    Print / Save PDF
+  </button>
+</div>
+
+<div class="overflow-x-auto rounded-xl bg-white p-4 shadow">
+  <table class="w-full text-left text-sm">
+    <thead>
+      <tr class="border-b text-slate-600">
+        <th class="p-2">Institution</th>
+        <th class="p-2">AICTE ID</th>
+        <th class="p-2">State</th>
+        <th class="p-2">Type</th>
+        <th class="p-2">Enrolment</th>
+        <th class="p-2">Approved intake</th>
+        <th class="p-2">Fill</th>
+        <th class="p-2">Open flags</th>
+        <th class="p-2">Compliance</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr class="border-b">
+        <td class="p-2">{{ row.name }}</td>
+        <td class="p-2">{{ row.aicte_id }}</td>
+        <td class="p-2">{{ row.state }}</td>
+        <td class="p-2">{{ row.type }}</td>
+        <td class="p-2">{{ row.enrolment }}</td>
+        <td class="p-2">{{ row.intake }}</td>
+        <td class="p-2">{{ (row.fill_ratio * 100)|round(1) }}%</td>
+        <td class="p-2">{{ row.open_flags }}</td>
+        <td class="p-2">{{ row.compliance_score }}/100</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="9" class="p-4 text-center text-slate-500">No institutions match this report.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<style>
+@media print {
+  nav, footer { display: none !important; }
+  body { background: white !important; }
+  main { max-width: none !important; padding: 0 !important; }
+}
+</style>
+{% endblock %}

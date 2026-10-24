@@ -31,6 +31,17 @@ def _institute_summary(session: Session, institution_id: int) -> Dict[str, float
     ).all()
     total_students = len(students)
     fill_ratio = (total_students / total_intake) if total_intake else 0.0
+    enrolment_by_program: Dict[int, int] = {}
+    for student in students:
+        enrolment_by_program[student.program_id] = enrolment_by_program.get(student.program_id, 0) + 1
+    max_program_fill_ratio = max(
+        (
+            enrolment_by_program.get(program.id, 0) / program.approved_intake
+            for program in programs
+            if program.approved_intake > 0
+        ),
+        default=0.0,
+    )
 
     yearly_enrolment: Dict[int, int] = {}
     for student in students:
@@ -50,6 +61,7 @@ def _institute_summary(session: Session, institution_id: int) -> Dict[str, float
 
     return {
         "fill_ratio": fill_ratio,
+        "max_program_fill_ratio": max_program_fill_ratio,
         "nri_share": nri_share,
         "fn_share": fn_share,
         "oci_share": oci_share,
@@ -102,14 +114,14 @@ def run_anomaly_detection(session: Session) -> List[AnomalyAlert]:
     for institution in institutions:
         metric = metrics[institution.id]
         z = _zscore(metric["fill_ratio"], fill_values)
-        if abs(z) > 2 or metric["fill_ratio"] > 1.0:
+        if abs(z) > 2 or metric["fill_ratio"] > 1.0 or metric["max_program_fill_ratio"] > 1.0:
             alerts.append(
                 _make_alert(
                     session,
                     institution.id,
                     "A1",
-                    abs(z) if z else metric["fill_ratio"],
-                    f"Institution enrollment is {metric['fill_ratio']:.2%} of approved intake, well above the portfolio norm.",
+                    max(abs(z), metric["max_program_fill_ratio"]),
+                    f"Institution enrollment is {metric['fill_ratio']:.2%} of total approved intake; its highest program fill is {metric['max_program_fill_ratio']:.2%}. Review programs exceeding approved seats.",
                 )
             )
 

@@ -468,6 +468,11 @@ def seed_database():
             session.add(su)
         session.commit()
 
+    from app.anomaly import run_anomaly_detection
+
+    with Session(engine) as session:
+        run_anomaly_detection(session)
+
     # Print summary credentials
     print("\n" + "=" * 65)
     print("  SEEDING COMPLETE - DEMO CREDENTIALS")
