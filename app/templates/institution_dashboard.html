@@ -85,7 +85,10 @@
                             <span class="font-semibold {% if prog.fill_ratio > 1.0 %}text-red-600{% elif prog.fill_ratio >= 0.9 %}text-amber-600{% else %}text-emerald-600{% endif %}">{{ (prog.fill_ratio * 100)|round(1) }}%</span>
                         </div>
                         <div class="w-full bg-gray-200 rounded-full h-2">
-                            <div class="h-2 rounded-full {% if prog.fill_ratio > 1.0 %}bg-red-500{% elif prog.fill_ratio >= 0.9 %}bg-amber-500{% else %}bg-emerald-500{% endif %}" style="width: {{ [prog.fill_ratio * 100, 100]|min }}%"></div>
+                           {% set bar_w = [prog.fill_ratio * 100, 100]|min %}
+<div class="h-2 rounded-full {% if prog.fill_ratio > 1.0 %}bg-red-500{% elif prog.fill_ratio >= 0.9 %}bg-amber-500{% else %}bg-emerald-500{% endif %}"
+     data-w="{{ bar_w|round(1) }}"></div>
+                            </div>
                         </div>
                     </div>
                     <span class="px-2.5 py-1 text-xs font-semibold rounded-full {% if prog.decision == 'BLOCK' %}bg-red-100 text-red-800 border border-red-200{% elif prog.decision == 'WARN' %}bg-amber-100 text-amber-800 border border-amber-200{% else %}bg-emerald-100 text-emerald-800 border border-emerald-200{% endif %}">
@@ -137,4 +140,12 @@
         {% endif %}
     </div>
 </div>
+{% block scripts %}
+<script>
+  // Set progress bar widths from data-w attributes
+  document.querySelectorAll('[data-w]').forEach(function (el) {
+    el.style.width = el.dataset.w + '%';
+  });
+</script>
+{% endblock %}
 {% endblock %}
