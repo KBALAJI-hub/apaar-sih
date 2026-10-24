@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% block title %}Student Dashboard · {{ student.full_name if student else 'Student' }} · APAAR Verify{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-7xl mx-auto">
+
+    <!-- Top Profile Banner -->
+    <div class="bg-gradient-to-r from-indigo-900 via-indigo-800 to-blue-900 rounded-2xl shadow-lg p-6 sm:p-8 text-white">
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div class="flex items-center gap-5">
+                <!-- Avatar circle -->
+                <div class="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 flex items-center justify-center text-2xl sm:text-3xl font-extrabold text-white shadow-inner">
+                    {% if student and student.full_name %}
+                        {{ student.full_name[:2].upper() }}
+                    {% else %}
+                        ST
+                    {% endif %}
+                </div>
+                <div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span>
+                            ACTIVE ENROLMENT
+                        </span>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-500/30 text-indigo-200 border border-indigo-400/30">
+                            AICTE NATIONAL REGISTRY
+                        </span>
+                    </div>
+                    <h1 class="text-2xl sm:text-3xl font-extrabold text-white mt-1.5 tracking-tight">
+                        {{ student.full_name if student else user.full_name }}
+                    </h1>
+                    <p class="text-indigo-200 text-sm mt-0.5 flex items-center gap-2 flex-wrap">
+                        <span>Roll No: <strong class="text-white font-mono">{{ student.student_id if student else user.username }}</strong></span>
+                        <span>&bull;</span>
+                        <span>{{ institution.name if institution else 'All India Council for Technical Education' }}</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- APAAR ID Prominent Card -->
+            <div class="bg-white/10 backdrop-blur-md border border-white/20 rounded-xl p-4 sm:p-5 flex flex-col justify-center min-w-[280px]">
+                <div class="text-xs font-semibold uppercase tracking-wider text-indigo-200 flex items-center justify-between">
+                    <span>APAAR ID (Automated Permanent Academic Account Registry)</span>
+                    <svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                </div>
+                <div class="flex items-center justify-between gap-3 mt-2">
+                    <span class="text-2xl font-mono font-bold tracking-widest text-white" id="apaar-display">
+                        {% if student and student.apaar_id %}
+                            {{ student.apaar_id[:4] }} {{ student.apaar_id[4:8] }} {{ student.apaar_id[8:] }}
+                        {% else %}
+                            {{ user.apaar_id or '1000 0000 0001' }}
+                        {% endif %}
+                    </span>
+                    <button type="button" onclick="navigator.clipboard.writeText('{{ student.apaar_id if student else user.apaar_id }}'); alert('APAAR ID copied to clipboard!');"
+                            class="px-2.5 py-1 text-xs rounded bg-white/20 hover:bg-white/30 text-white font-medium transition flex items-center gap-1">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                        Copy
+                    </button>
+                </div>
+                <div class="text-[11px] text-indigo-300 mt-1">One Nation, One Student ID (Edu-Locker Linked)</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main 2-Column Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Left 2-Column: Academic Profile & Consent Settings -->
+        <div class="lg:col-span-2 space-y-6">
+
+            <!-- Card 1: Academic Enrollment Profile -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"></path></svg>
+                        <h2 class="text-base font-bold text-gray-900">Academic Enrollment Details</h2>
+                    </div>
+                    <span class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        AICTE Verified Record
+                    </span>
+                </div>
+
+                <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                    <div class="p-3.5 rounded-xl bg-gray-50 border border-gray-100">
+                        <div class="text-xs font-medium text-gray-500 uppercase">Institution</div>
+                        <div class="font-bold text-gray-900 mt-0.5">{{ institution.name if institution else 'AICTE Approved Institute' }}</div>
+                        <div class="text-xs text-indigo-600 mt-1 font-mono">AICTE ID: {{ institution.aicte_id if institution else '1-000000000' }} &bull; {{ institution.state if institution else 'India' }}</div>
+                    </div>
+
+                    <div class="p-3.5 rounded-xl bg-gray-50 border border-gray-100">
+                        <div class="text-xs font-medium text-gray-500 uppercase">Program Enrolled</div>
+                        <div class="font-bold text-gray-900 mt-0.5">{{ program.name if program else 'Bachelor of Technology' }}</div>
+                        <div class="text-xs text-gray-600 mt-1">Level: <span class="font-semibold">{{ program.level if program else 'Undergraduate' }}</span></div>
+                    </div>
+
+                    <div class="p-3.5 rounded-xl bg-gray-50 border border-gray-100">
+                        <div class="text-xs font-medium text-gray-500 uppercase">Admission Year & Mode</div>
+                        <div class="font-bold text-gray-900 mt-0.5">{{ student.admission_year if student else '2024' }} ({{ student.mode if student else 'FULL_TIME' }})</div>
+                        <div class="text-xs text-gray-600 mt-1">Admission Type: <span class="font-semibold">{{ student.admission_type if student else 'REGULAR' }}</span></div>
+                    </div>
+
+                    <div class="p-3.5 rounded-xl bg-gray-50 border border-gray-100">
+                        <div class="text-xs font-medium text-gray-500 uppercase">Demographic & Category</div>
+                        <div class="font-bold text-gray-900 mt-0.5">{{ student.gender if student else 'N/A' }} &bull; {{ student.category if student else 'General' }}</div>
+                        <div class="text-xs text-gray-600 mt-1">Nationality: <span class="font-semibold">{{ student.nationality if student else 'Indian' }}</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Card 2: Consent-Aware Tiered Disclosure (SIH PS 26263 D4) -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                        <h2 class="text-base font-bold text-gray-900">Privacy & Consent Management (DPDP Act Compliance)</h2>
+                    </div>
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold {% if student and student.consent_level == 2 %}bg-emerald-100 text-emerald-800 border border-emerald-300{% elif student and student.consent_level == 1 %}bg-blue-100 text-blue-800 border border-blue-300{% else %}bg-amber-100 text-amber-800 border border-amber-300{% endif %}">
+                        Active Preference: Tier {{ student.consent_level if student else 2 }}
+                    </span>
+                </div>
+
+                <div class="p-6 space-y-4">
+                    <p class="text-xs text-gray-600">
+                        Under India's <strong>Digital Personal Data Protection (DPDP) Act</strong>, you have complete sovereignty over who can verify your student credentials. Select what information employers and third-party verifiers can view when querying your APAAR ID:
+                    </p>
+
+                    <form method="POST" action="/student/dashboard/consent" class="space-y-3">
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <!-- Tier 0 -->
+                            <label class="relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition hover:bg-gray-50 {% if student and student.consent_level == 0 %}border-amber-500 bg-amber-50/40{% else %}border-gray-200{% endif %}">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-xs font-bold text-amber-700">TIER 0</span>
+                                    <input type="radio" name="consent_level" value="0" {% if student and student.consent_level == 0 %}checked{% endif %} class="text-indigo-600 focus:ring-indigo-500">
+                                </div>
+                                <span class="font-bold text-sm text-gray-900">Withhold Details</span>
+                                <span class="text-[11px] text-gray-500 mt-1 leading-snug">Verifiers only see that the APAAR ID exists and is valid. All academic fields hidden.</span>
+                            </label>
+
+                            <!-- Tier 1 -->
+                            <label class="relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition hover:bg-gray-50 {% if student and student.consent_level == 1 %}border-blue-500 bg-blue-50/40{% else %}border-gray-200{% endif %}">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-xs font-bold text-blue-700">TIER 1</span>
+                                    <input type="radio" name="consent_level" value="1" {% if student and student.consent_level == 1 %}checked{% endif %} class="text-indigo-600 focus:ring-indigo-500">
+                                </div>
+                                <span class="font-bold text-sm text-gray-900">Directory Only</span>
+                                <span class="text-[11px] text-gray-500 mt-1 leading-snug">Verifiers can see your Institution, Program, Admission Year, and Active Status.</span>
+                            </label>
+
+                            <!-- Tier 2 -->
+                            <label class="relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition hover:bg-gray-50 {% if not student or student.consent_level == 2 %}border-emerald-500 bg-emerald-50/40{% else %}border-gray-200{% endif %}">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-xs font-bold text-emerald-700">TIER 2 (Recommended)</span>
+                                    <input type="radio" name="consent_level" value="2" {% if not student or student.consent_level == 2 %}checked{% endif %} class="text-indigo-600 focus:ring-indigo-500">
+                                </div>
+                                <span class="font-bold text-sm text-gray-900">Full Record & Signature</span>
+                                <span class="text-[11px] text-gray-500 mt-1 leading-snug">Verifiers can view full credentials, Ed25519 digital signature, and verification certificate.</span>
+                            </label>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-2">
+                            <span class="text-[11px] text-gray-400">
+                                Last updated: {% if student and student.consent_timestamp %}{{ student.consent_timestamp.strftime('%d %b %Y, %I:%M %p') }}{% else %}Default Setting{% endif %}
+                            </span>
+                            <button type="submit" class="px-5 py-2 bg-indigo-700 hover:bg-indigo-800 text-white rounded-lg text-xs font-semibold shadow-sm transition">
+                                Save Privacy Preference
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Card 3: "Who Looked Me Up" Access Log (SIH PS 26263 D4) -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                        <h2 class="text-base font-bold text-gray-900">Who Looked Me Up · Real-time Access Audit Trail</h2>
+                    </div>
+                    <span class="text-xs text-gray-500 font-mono">{{ lookups|length }} Verification(s)</span>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-xs text-left">
+                        <thead class="bg-gray-50 text-gray-500 uppercase tracking-wider font-semibold border-b border-gray-200">
+                            <tr>
+                                <th class="py-3 px-6">Timestamp</th>
+                                <th class="py-3 px-6">Verifier Channel</th>
+                                <th class="py-3 px-6">Disclosure Tier</th>
+                                <th class="py-3 px-6">Cryptographic Result</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-100 text-gray-700">
+                            {% for lookup in lookups %}
+                            <tr class="hover:bg-gray-50 transition">
+                                <td class="py-3.5 px-6 font-mono text-gray-600">
+                                    {{ lookup.timestamp.strftime('%Y-%m-%d %H:%M:%S') if lookup.timestamp else 'Just now' }}
+                                </td>
+                                <td class="py-3.5 px-6 font-medium text-gray-900">
+                                    {% if lookup.verifier_id %}
+                                        Verifier #{{ lookup.verifier_id }}
+                                    {% else %}
+                                        Public QR / Portal Scan
+                                    {% endif %}
+                                </td>
+                                <td class="py-3.5 px-6">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold {% if lookup.tier_shown == 2 %}bg-emerald-50 text-emerald-700 border border-emerald-200{% elif lookup.tier_shown == 1 %}bg-blue-50 text-blue-700 border border-blue-200{% else %}bg-amber-50 text-amber-700 border border-amber-200{% endif %}">
+                                        Tier {{ lookup.tier_shown }}
+                                    </span>
+                                </td>
+                                <td class="py-3.5 px-6">
+                                    <span class="inline-flex items-center gap-1 font-semibold {% if lookup.result == 'VALID' %}text-emerald-700{% else %}text-red-700{% endif %}">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                        {{ lookup.result }}
+                                    </span>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="4" class="py-8 px-6 text-center text-gray-400">
+                                    <svg class="w-8 h-8 mx-auto text-gray-300 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                    No third-party verification lookups recorded yet. Any employer, college or agency lookups will appear here instantly.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Right Column: Digital Trust Credentials & QR Code -->
+        <div class="space-y-6">
+
+            <!-- Card 4: Verifiable Credential & QR Code (SIH PS 26263 D3 & Req 10) -->
+            <div class="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden text-center p-6 space-y-4">
+                <div class="flex items-center justify-center gap-2 text-indigo-700 font-bold text-sm">
+                    <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                    Tamper-Evident Credential
+                </div>
+
+                <!-- Live QR Code -->
+                <div class="p-3 bg-gradient-to-b from-indigo-50 to-white rounded-xl inline-block border border-indigo-100 shadow-inner">
+                    {% if qr_url %}
+                        <img src="{{ qr_url }}" alt="Verification QR Code" class="w-40 h-40 mx-auto rounded-lg shadow-sm">
+                    {% else %}
+                        <div class="w-40 h-40 flex items-center justify-center text-xs text-gray-400 border border-dashed rounded-lg">QR Generated on Demand</div>
+                    {% endif %}
+                    <div class="text-[11px] text-gray-500 font-medium mt-2">Scan to verify digital authenticity</div>
+                </div>
+
+                <!-- Cryptographic Badge -->
+                <div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-left space-y-1">
+                    <div class="flex items-center gap-1.5 text-xs font-bold text-emerald-800">
+                        <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        Ed25519 Cryptographically Signed
+                    </div>
+                    <div class="text-[11px] text-emerald-700">
+                        Canonical record verified against AICTE Root Public Key. Any database tampering invalidates the QR instantly.
+                    </div>
+                    <div class="text-[10px] font-mono text-gray-500 break-all pt-1 border-t border-emerald-100">
+                        Sig: {{ student.record_signature[:36] if student and student.record_signature else 'e9f3b18a...' }}...
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="space-y-2 pt-2">
+                    <a href="/certificate/{{ student.id if student else '1' }}"
+                       class="w-full py-2.5 px-4 bg-indigo-700 hover:bg-indigo-800 text-white rounded-xl text-xs font-bold shadow transition flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                        View & Print Official Certificate
+                    </a>
+
+                    <a href="{{ verify_url }}" target="_blank"
+                       class="w-full py-2 px-4 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+                        Open Public Verify URL
+                    </a>
+
+                    <a href="/student/consent"
+                       class="w-full py-2 px-4 border border-emerald-300 text-emerald-800 hover:bg-emerald-50 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                        DigiLocker OTP Gateway
+                    </a>
+                </div>
+            </div>
+
+            <!-- Card 5: Trust Architecture info -->
+            <div class="bg-gray-50 rounded-2xl border border-gray-200 p-5 text-xs text-gray-600 space-y-2">
+                <div class="font-bold text-gray-900 flex items-center gap-1.5">
+                    <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    National Student Registry Trust Protocol
+                </div>
+                <p>
+                    Every enrollment is digitally signed with an Ed25519 asymmetric key pair. AICTE publishes its root public key at
+                    <a href="/.well-known/aicte-public-key.pem" class="text-indigo-600 underline font-mono text-[11px]" target="_blank">/.well-known/aicte-public-key.pem</a>
+                    allowing independent mathematical proof of validity without contacting third parties.
+                </p>
+            </div>
+
+        </div>
+
+    </div>
+
+</div>
+{% endblock %}

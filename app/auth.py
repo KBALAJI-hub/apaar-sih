@@ -31,7 +31,7 @@ ROLE_REDIRECTS = {
     "AICTE_ADMIN": "/aicte/dashboard",
     "INSTITUTION": "/institution/dashboard",
     "VERIFIER": "/verify",
-    "STUDENT": "/student/consent",
+    "STUDENT": "/student/dashboard",
 }
 
 # Templates directory reference

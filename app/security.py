@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 import qrcode
 from sqlmodel import Session
+from app.database import get_db_session
 
 # Default private key file path
 DEFAULT_KEY_FILENAME = "aicte_ed25519_private.pem"
@@ -144,7 +145,7 @@ def build_canonical_record(student: Any, session: Optional[Session] = None) -> s
             inst = session.get(Institution, institution_id)
             aicte_id = inst.aicte_id if inst else ""
         else:
-            with Session(engine) as s:
+            with get_db_session() as s:
                 inst = s.get(Institution, institution_id)
                 aicte_id = inst.aicte_id if inst else ""
 
@@ -154,7 +155,7 @@ def build_canonical_record(student: Any, session: Optional[Session] = None) -> s
             prog = session.get(Program, program_id)
             program_name = prog.name if prog else ""
         else:
-            with Session(engine) as s:
+            with get_db_session() as s:
                 prog = s.get(Program, program_id)
                 program_name = prog.name if prog else ""
 

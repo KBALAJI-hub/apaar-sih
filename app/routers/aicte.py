@@ -475,7 +475,7 @@ def aicte_summary(
         "totals": {
             "institutions": len(institutions),
             "total_enrolment": sum(enrolment_by_institution.values()),
-            "total_intake": sum(row["approved_intake"] for row in institution_rows),
+            "total_intake": sum(int(p.approved_intake or 0) for progs in programs_by_institution.values() for p in progs),
             "flagged_institutions": sum(count > 0 for count in flags_by_institution.values()),
             "cross_institution_duplicates": cross_duplicate_count,
         },
