@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APAAR Verify: AICTE Student Data Platform</title>
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        /* Severity badges */
+        .badge-high {
+            background-color: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #f87171;
+            padding: 0.15rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+        }
+        .badge-medium {
+            background-color: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fbbf24;
+            padding: 0.15rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+        }
+        .badge-low {
+            background-color: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #60a5fa;
+            padding: 0.15rem 0.5rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-900 flex flex-col font-sans">
+    <!-- Top Navbar -->
+    <nav class="bg-white border-b border-gray-200 px-6 py-4 shadow-sm">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <a href="/" class="text-xl font-bold text-indigo-700 tracking-tight hover:text-indigo-800">
+                    APAAR Verify: AICTE Student Data Platform
+                </a>
+            </div>
+
+            <!-- Placeholder area for role-based links -->
+            <div id="role-nav-links" class="flex items-center space-x-4 text-sm font-medium">
+                {% if role == 'AICTE_ADMIN' %}
+                    <a href="/aicte/dashboard" class="text-gray-700 hover:text-indigo-600">AICTE Dashboard</a>
+                    <a href="/aicte/institutions" class="text-gray-700 hover:text-indigo-600">Institutions</a>
+                    <a href="/aicte/audit" class="text-gray-700 hover:text-indigo-600">Audit Logs</a>
+                    <a href="/logout" class="text-red-600 hover:text-red-700">Logout</a>
+                {% elif role == 'INSTITUTION' %}
+                    <a href="/institution/dashboard" class="text-gray-700 hover:text-indigo-600">Dashboard</a>
+                    <a href="/institution/students" class="text-gray-700 hover:text-indigo-600">Students</a>
+                    <a href="/institution/upload" class="text-gray-700 hover:text-indigo-600">Upload CSV</a>
+                    <a href="/logout" class="text-red-600 hover:text-red-700">Logout</a>
+                {% elif role == 'VERIFIER' %}
+                    <a href="/verify" class="text-gray-700 hover:text-indigo-600">Verification Portal</a>
+                    <a href="/logout" class="text-red-600 hover:text-red-700">Logout</a>
+                {% elif role == 'STUDENT' %}
+                    <a href="/student/consent" class="text-gray-700 hover:text-indigo-600">My Consent</a>
+                    <a href="/logout" class="text-red-600 hover:text-red-700">Logout</a>
+                {% else %}
+                    <!-- Public / Unauthenticated links -->
+                    <a href="/" class="text-gray-600 hover:text-indigo-600">Home</a>
+                    <a href="/verify" class="text-gray-600 hover:text-indigo-600">Verify</a>
+                    <a href="/login" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">Login</a>
+                {% endif %}
+            </div>
+        </div>
+    </nav>
+
+    <!-- Flash-Message Area -->
+    <div id="flash-message-area" class="max-w-7xl mx-auto px-6 pt-4 w-full">
+        {% if flash_message %}
+            <div class="p-4 mb-4 text-sm rounded-lg border {% if flash_type == 'error' %}bg-red-50 text-red-800 border-red-200{% elif flash_type == 'success' %}bg-green-50 text-green-800 border-green-200{% else %}bg-blue-50 text-blue-800 border-blue-200{% endif %}">
+                {{ flash_message }}
+            </div>
+        {% elif message %}
+            <div class="p-4 mb-4 text-sm text-blue-800 rounded-lg bg-blue-50 border border-blue-200">
+                {{ message }}
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Main Content Block -->
+    <main class="flex-1 max-w-7xl mx-auto px-6 py-6 w-full">
+        {% block content %}
+        <!-- Default content fallback -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center max-w-2xl mx-auto mt-8">
+            <h1 class="text-2xl font-bold text-gray-900 mb-2">APAAR Verify Platform</h1>
+            <p class="text-gray-600">Welcome to AICTE Student Data Platform.</p>
+        </div>
+        {% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t border-gray-200 py-4 text-center text-xs text-gray-500 mt-auto">
+        AICTE SIH PS 26263 Prototype &bull; APAAR Verify
+    </footer>
+</body>
+</html>
