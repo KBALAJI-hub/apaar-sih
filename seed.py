@@ -6,22 +6,19 @@ Generates deterministic demo data with fixed seeds:
 - Planted problems for SIH PS 26263 validation & anomaly rules
 """
 
-from datetime import datetime, timezone
 import random
 from faker import Faker
 from sqlmodel import Session, select
 
 from app.auth import hash_password
-from app.database import engine, get_session, reset_db
+from app.database import engine, reset_db
 from app.models import (
-    AnomalyAlert,
     ApaarRegistry,
     Institution,
     Program,
     Setting,
     Student,
     User,
-    ValidationFlag,
     utc_now,
 )
 
@@ -37,6 +34,9 @@ def generate_apaar_id(seq: int) -> str:
 
 
 def seed_database():
+    random.seed(42)
+    fake.seed_instance(42)
+
     print("=" * 65)
     print("  APAAR Verify - Database Seeder (SIH PS 26263)")
     print("=" * 65)
@@ -187,7 +187,7 @@ def seed_database():
         session.commit()
 
         # 4. Seed Mock ApaarRegistry (~850 records)
-        print("[4/6] Seeding ~850 central ApaarRegistry records...")
+        print("[4/6] Seeding 850 central ApaarRegistry records...")
         registry_records = []
         for seq in range(1, 851):
             apaar_id = generate_apaar_id(seq)
@@ -223,16 +223,15 @@ def seed_database():
         for inst_idx, inst in enumerate(institutions):
             inst_programs = programs_by_inst[inst.id]
 
-            # Institution 2: YoY Surge (inst_idx == 1)
-            # Few students in 2023-24, 3x surge in 2024-25
+            # Institution 2: a 3x year-over-year enrollment increase.
             for prog in inst_programs:
                 if inst_idx == 1:
-                    target_count = 15 if prog.academic_year == "2023-24" else 55
+                    target_count = 15 if prog.academic_year == "2023-24" else 44
                 elif inst_idx == 2 and "Bachelor of Pharmacy" in prog.name and prog.academic_year == "2024-25":
                     # Institution 3: 135% intake exceeded planted problem
                     target_count = int(prog.approved_intake * 1.35)  # 81 students on 60 intake
                 else:
-                    target_count = random.randint(35, min(50, prog.approved_intake))
+                    target_count = random.randint(15, 25)
 
                 for s_num in range(target_count):
                     apaar_id = generate_apaar_id(curr_apaar_idx)
@@ -248,8 +247,8 @@ def seed_database():
                     consent_dice = random.random()
                     consent_level = 2 if consent_dice < 0.40 else (1 if consent_dice < 0.70 else 0)
 
-                    # Planted anomaly: Institution 4 has ~40% NRI share (inst_idx == 3)
-                    is_nri = (random.random() < 0.40) if inst_idx == 3 else (random.random() < 0.05)
+                    # Plant an exact 40% NRI share at institution 4.
+                    is_nri = (s_num < int(target_count * 0.40)) if inst_idx == 3 else (random.random() < 0.05)
                     admission_type = "SUPERNUMERARY" if is_nri and random.random() < 0.5 else "REGULAR"
 
                     stu = Student(
@@ -274,6 +273,14 @@ def seed_database():
                         created_at=utc_now(),
                     )
                     students.append(stu)
+
+        institution4_students = [
+            student for student in students
+            if student.institution_id == institutions[3].id
+        ]
+        nri_target = round(len(institution4_students) * 0.40)
+        for index, student in enumerate(institution4_students):
+            student.is_nri = index < nri_target
 
         # Plant specific test anomalies into student dataset:
         # A) 3 duplicate APAAR IDs inside institution 1
@@ -356,7 +363,7 @@ def seed_database():
 
         # D) 5 Name or DOB mismatches vs registry
         for i in range(5):
-            target_reg = registry_records[50 + i]
+            target_reg = registry_records[700 + i]
             students.append(
                 Student(
                     apaar_id=target_reg.apaar_id,
@@ -382,15 +389,16 @@ def seed_database():
 
         # E) Foreign national rows with nationality India
         for i in range(3):
+            registry_person = registry_records[curr_apaar_idx + i - 1]
             students.append(
                 Student(
                     apaar_id=generate_apaar_id(curr_apaar_idx + i),
                     institution_id=institutions[0].id,
                     program_id=programs_by_inst[institutions[0].id][0].id,
                     student_id=f"DTI-FNIND-{i + 1:02d}",
-                    full_name=fake.name(),
-                    dob="2004-07-15",
-                    gender="F",
+                    full_name=registry_person.full_name,
+                    dob=registry_person.dob,
+                    gender=registry_person.gender,
                     category="GENERAL",
                     admission_type="REGULAR",
                     is_nri=False,
@@ -408,15 +416,16 @@ def seed_database():
         # F) Cluster of students sharing one identical DOB (Suspicious Cluster A4)
         cluster_dob = "2004-05-15"
         for i in range(12):
+            registry_person = registry_records[curr_apaar_idx + 9 + i]
             students.append(
                 Student(
                     apaar_id=generate_apaar_id(curr_apaar_idx + 10 + i),
                     institution_id=institutions[2].id,
                     program_id=programs_by_inst[institutions[2].id][0].id,
                     student_id=f"KCP-CLUSTER-{i + 1:02d}",
-                    full_name=fake.name(),
+                    full_name=registry_person.full_name,
                     dob=cluster_dob,  # Identical DOB cluster
-                    gender="M",
+                    gender=registry_person.gender,
                     category="OBC",
                     admission_type="REGULAR",
                     is_nri=False,
@@ -469,7 +478,7 @@ def seed_database():
     print("  VERIFIER        employer1      Verify@123    TCS Campus Recruiter")
     print("  STUDENT         student1..5    Student@123   OTP: 123456 (Linked APAAR)")
     print("=" * 65)
-    print(f"  Summary: 5 Institutions | ~850 Registry | {len(students)} Students")
+    print(f"  Summary: 5 Institutions | {len(registry_records)} Registry | {len(students)} Students")
     print("=" * 65 + "\n")
 
 
