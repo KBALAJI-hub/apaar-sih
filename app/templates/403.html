@@ -2,13 +2,16 @@
 {% block title %}Access denied · APAAR Verify{% endblock %}
 
 {% block content %}
-<div class="max-w-lg mx-auto bg-white rounded-xl shadow p-10 text-center mt-8">
-  <div class="text-6xl font-bold text-red-600 mb-2">403</div>
-  <h1 class="text-xl font-semibold mb-2">Access denied</h1>
-  <p class="text-slate-600 mb-6">
-    Your role does not have permission to view this page.
-    This attempt may be recorded in the audit log.
-  </p>
-  <a href="/" class="inline-block bg-indigo-700 hover:bg-indigo-800 text-white px-5 py-2 rounded font-semibold">Go to home</a>
+<div class="max-w-md mx-auto text-center py-16 px-4">
+    <div class="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-xl border border-red-200">
+        403
+    </div>
+    <h1 class="text-2xl font-bold text-gray-900 mb-2">Access Forbidden</h1>
+    <p class="text-sm text-gray-600 mb-6">
+        Your role does not have permission to view this page. This attempt may be recorded in the audit log.
+    </p>
+    <a href="/" class="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition">
+        Return to Home
+    </a>
 </div>
 {% endblock %}

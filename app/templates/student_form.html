@@ -1,201 +1,222 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Edit' if student else 'Add' }} student · APAAR Verify{% endblock %}
 
 {% block content %}
-{% set s = student or {} %}
-<div class="max-w-3xl mx-auto">
-  <h1 class="text-2xl font-bold text-indigo-900 mb-4">{{ 'Edit student' if student else 'Add student' }}</h1>
-
-  <form method="post" class="bg-white rounded-xl shadow p-6 space-y-5" id="student-form">
-
-    <!-- ===== Program + live seat meter ===== -->
-    <div>
-      <label for="program_id" class="block text-sm font-medium mb-1">Program *</label>
-      <select id="program_id" name="program_id" required class="w-full border rounded px-3 py-2">
-        <option value="">Select a program</option>
-        {% for p in programs or [] %}
-          <option value="{{ p.id }}" {% if s.program_id and s.program_id|string == p.id|string %}selected{% endif %}>
-            {{ p.name }} ({{ p.academic_year }})
-          </option>
-        {% endfor %}
-      </select>
-
-      <!-- Seat meter (hidden until a program is chosen) -->
-      <div id="meter" class="hidden mt-3 border rounded p-3">
-        <div class="flex justify-between text-sm mb-1">
-          <span id="meter-text" class="font-medium"></span>
-          <span id="meter-badge" class="px-2 py-0.5 rounded text-xs font-bold text-white"></span>
+<div class="max-w-3xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between pb-4 border-b border-gray-200">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">
+                {% if student %}Edit Student: {{ student.full_name }}{% else %}Add New Student Record{% endif %}
+            </h1>
+            <p class="text-sm text-gray-500">Student enrollment profile with automated APAAR verification and Intake Guard</p>
         </div>
-        <div class="w-full bg-slate-200 rounded h-3 overflow-hidden">
-          <div id="meter-bar" class="h-3 rounded" style="width:0%"></div>
+        <a href="/institution/students" class="text-sm font-medium text-gray-600 hover:text-gray-900">&larr; Back to Student List</a>
+    </div>
+
+    <!-- Error Alert -->
+    {% if error %}
+    <div class="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800 flex items-start gap-3">
+        <svg class="w-5 h-5 text-red-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        <div>
+            <div class="font-bold">Validation Issue</div>
+            <div>{{ error }}</div>
         </div>
-        <p id="meter-msg" class="text-xs mt-2"></p>
-      </div>
-
-      <!-- Justification: shown only when decision is BLOCK -->
-      <div id="override-box" class="hidden mt-3">
-        <label for="override_justification" class="block text-sm font-medium text-red-700 mb-1">
-          Intake exceeded. Justification required to override *
-        </label>
-        <textarea id="override_justification" name="override_justification" rows="3"
-                  class="w-full border border-red-300 rounded px-3 py-2"
-                  placeholder="Explain why this admission exceeds the approved intake. This is logged and flagged HIGH."></textarea>
-      </div>
     </div>
+    {% endif %}
 
-    <!-- ===== Identity ===== -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div>
-        <label for="apaar_id" class="block text-sm font-medium mb-1">APAAR ID (12 digits) *</label>
-        <input id="apaar_id" name="apaar_id" type="text" required maxlength="12" pattern="\d{12}"
-               value="{{ s.apaar_id or '' }}" {% if student %}readonly{% endif %}
-               class="w-full border rounded px-3 py-2 font-mono {% if student %}bg-slate-100{% endif %}">
-      </div>
-      <div>
-        <label for="student_id" class="block text-sm font-medium mb-1">Student ID / Roll no.</label>
-        <input id="student_id" name="student_id" type="text" value="{{ s.student_id or '' }}"
-               class="w-full border rounded px-3 py-2">
-      </div>
-      <div>
-        <label for="full_name" class="block text-sm font-medium mb-1">Full name *</label>
-        <input id="full_name" name="full_name" type="text" required value="{{ s.full_name or '' }}"
-               class="w-full border rounded px-3 py-2">
-      </div>
-      <div>
-        <label for="dob" class="block text-sm font-medium mb-1">Date of birth *</label>
-        <input id="dob" name="dob" type="date" required value="{{ s.dob or '' }}"
-               class="w-full border rounded px-3 py-2">
-      </div>
-      <div>
-        <label for="gender" class="block text-sm font-medium mb-1">Gender</label>
-        <select id="gender" name="gender" class="w-full border rounded px-3 py-2">
-          {% for g in ['Male', 'Female', 'Other'] %}
-            <option value="{{ g }}" {% if s.gender == g %}selected{% endif %}>{{ g }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label for="category" class="block text-sm font-medium mb-1">Category</label>
-        <select id="category" name="category" class="w-full border rounded px-3 py-2">
-          {% for c in ['General', 'OBC', 'SC', 'ST', 'EWS'] %}
-            <option value="{{ c }}" {% if s.category == c %}selected{% endif %}>{{ c }}</option>
-          {% endfor %}
-        </select>
-      </div>
-    </div>
+    <!-- Student Form -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 sm:p-8">
+        <form method="POST" action="{% if student %}/institution/students/{{ student.id }}/edit{% else %}/institution/students/new{% endif %}" class="space-y-6">
+            
+            <!-- Academic Program (Affects Intake Guard) -->
+            <div>
+                <label for="program_id" class="block text-sm font-semibold text-gray-900 mb-1">Academic Program *</label>
+                <select id="program_id" name="program_id" required onchange="checkIntake(this.value)"
+                        class="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                    <option value="">Select an AICTE Approved Program</option>
+                    {% for p in programs %}
+                    <option value="{{ p.id }}" {% if student and student.program_id == p.id %}selected{% endif %}>
+                        {{ p.name }} ({{ p.academic_year }}) - Approved Intake: {{ p.approved_intake }}
+                    </option>
+                    {% endfor %}
+                </select>
+                <!-- Live Seat Meter Card -->
+                <div id="seat-meter-container" class="mt-3 p-3.5 bg-gray-50 rounded-lg border border-gray-200 text-xs">
+                    <div class="flex items-center justify-between">
+                        <span class="font-medium text-gray-700">Intake Guard Status:</span>
+                        <span id="intake-badge" class="px-2 py-0.5 rounded font-semibold bg-gray-200 text-gray-800">Select a program</span>
+                    </div>
+                    <div id="intake-details" class="mt-1 text-gray-500">Seat availability updates live when you choose a program.</div>
+                </div>
+            </div>
 
-    <!-- ===== Admission ===== -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-      <div>
-        <label for="admission_year" class="block text-sm font-medium mb-1">Admission year *</label>
-        <input id="admission_year" name="admission_year" type="number" min="2000" max="2100" required
-               value="{{ s.admission_year or '' }}" class="w-full border rounded px-3 py-2">
-      </div>
-      <div>
-        <label for="admission_type" class="block text-sm font-medium mb-1">Admission type</label>
-        <select id="admission_type" name="admission_type" class="w-full border rounded px-3 py-2">
-          {% for t in ['REGULAR', 'SUPERNUMERARY'] %}
-            <option value="{{ t }}" {% if s.admission_type == t %}selected{% endif %}>{{ t }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label for="mode" class="block text-sm font-medium mb-1">Mode</label>
-        <select id="mode" name="mode" class="w-full border rounded px-3 py-2">
-          {% for m in ['FULL_TIME', 'PART_TIME'] %}
-            <option value="{{ m }}" {% if s.mode == m %}selected{% endif %}>{{ m }}</option>
-          {% endfor %}
-        </select>
-      </div>
-    </div>
+            <!-- APAAR ID and Student Roll Number -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label for="apaar_id" class="block text-sm font-semibold text-gray-900 mb-1">APAAR ID (12-Digit Numeric) *</label>
+                    <input type="text" id="apaar_id" name="apaar_id" maxlength="12" pattern="\d{12}" required
+                           value="{{ student.apaar_id if student else '' }}"
+                           placeholder="e.g. 100000000001"
+                           class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                    <p class="text-xs text-gray-500 mt-1">Must be exactly 12 ASCII numeric digits.</p>
+                </div>
+                <div>
+                    <label for="student_id" class="block text-sm font-semibold text-gray-900 mb-1">Institutional Roll / Enrollment ID *</label>
+                    <input type="text" id="student_id" name="student_id" required
+                           value="{{ student.student_id if student else '' }}"
+                           placeholder="e.g. DTI-2024-001"
+                           class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                </div>
+            </div>
 
-    <!-- ===== NRI / OCI / FN ===== -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <div>
-        <label for="nationality" class="block text-sm font-medium mb-1">Nationality</label>
-        <input id="nationality" name="nationality" type="text" value="{{ s.nationality or 'India' }}"
-               class="w-full border rounded px-3 py-2">
-      </div>
-      <div>
-        <label for="oci_status" class="block text-sm font-medium mb-1">OCI status</label>
-        <select id="oci_status" name="oci_status" class="w-full border rounded px-3 py-2">
-          {% for o in ['NONE', 'OCI'] %}
-            <option value="{{ o }}" {% if s.oci_status == o %}selected{% endif %}>{{ o }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <label class="flex items-center gap-2 text-sm">
-        <input type="checkbox" name="is_nri" value="true" {% if s.is_nri %}checked{% endif %}> NRI
-      </label>
-      <label class="flex items-center gap-2 text-sm">
-        <input type="checkbox" name="is_foreign_national" value="true" {% if s.is_foreign_national %}checked{% endif %}> Foreign national
-      </label>
-      <label class="flex items-center gap-2 text-sm md:col-span-2">
-        <input type="checkbox" name="consent_given" value="true" {% if s.consent_level and s.consent_level > 0 %}checked{% endif %}>
-        Student consent captured
-      </label>
-    </div>
+            <!-- Full Name, DOB, Gender -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="sm:col-span-1">
+                    <label for="full_name" class="block text-sm font-semibold text-gray-900 mb-1">Full Name (as per APAAR) *</label>
+                    <input type="text" id="full_name" name="full_name" required
+                           value="{{ student.full_name if student else '' }}"
+                           placeholder="Aarav Sharma"
+                           class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                    <label for="dob" class="block text-sm font-semibold text-gray-900 mb-1">Date of Birth (YYYY-MM-DD) *</label>
+                    <input type="text" id="dob" name="dob" pattern="\d{4}-\d{2}-\d{2}" required
+                           value="{{ student.dob if student else '' }}"
+                           placeholder="2004-05-12"
+                           class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                </div>
+                <div>
+                    <label for="gender" class="block text-sm font-semibold text-gray-900 mb-1">Gender *</label>
+                    <select id="gender" name="gender" required
+                            class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                        <option value="M" {% if student and student.gender == 'M' %}selected{% endif %}>Male (M)</option>
+                        <option value="F" {% if student and student.gender == 'F' %}selected{% endif %}>Female (F)</option>
+                        <option value="Other" {% if student and student.gender == 'Other' %}selected{% endif %}>Other</option>
+                    </select>
+                </div>
+            </div>
 
-    <div class="flex gap-3 pt-2">
-      <button type="submit" class="bg-indigo-700 hover:bg-indigo-800 text-white font-semibold px-6 py-2 rounded">Save</button>
-      <a href="/institution/students" class="px-6 py-2 rounded border text-slate-600">Cancel</a>
+            <!-- Category, Admission Type, Admission Year -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                    <label for="category" class="block text-sm font-semibold text-gray-900 mb-1">Category</label>
+                    <select id="category" name="category"
+                            class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                        <option value="GENERAL" {% if not student or student.category == 'GENERAL' %}selected{% endif %}>GENERAL</option>
+                        <option value="OBC" {% if student and student.category == 'OBC' %}selected{% endif %}>OBC</option>
+                        <option value="SC" {% if student and student.category == 'SC' %}selected{% endif %}>SC</option>
+                        <option value="ST" {% if student and student.category == 'ST' %}selected{% endif %}>ST</option>
+                        <option value="EWS" {% if student and student.category == 'EWS' %}selected{% endif %}>EWS</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="admission_type" class="block text-sm font-semibold text-gray-900 mb-1">Admission Type</label>
+                    <select id="admission_type" name="admission_type"
+                            class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                        <option value="REGULAR" {% if not student or student.admission_type == 'REGULAR' %}selected{% endif %}>REGULAR (Counts in approved intake)</option>
+                        <option value="SUPERNUMERARY" {% if student and student.admission_type == 'SUPERNUMERARY' %}selected{% endif %}>SUPERNUMERARY (Quota cap: 10%)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="admission_year" class="block text-sm font-semibold text-gray-900 mb-1">Admission Year</label>
+                    <input type="number" id="admission_year" name="admission_year" min="2020" max="2026" required
+                           value="{{ student.admission_year if student else 2024 }}"
+                           class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                </div>
+            </div>
+
+            <!-- Citizen / Quota Flags -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                <div class="flex items-center space-x-2">
+                    <input type="checkbox" id="is_nri" name="is_nri" value="true" {% if student and student.is_nri %}checked{% endif %}
+                           class="rounded text-indigo-600 focus:ring-indigo-500">
+                    <label for="is_nri" class="text-sm font-medium text-gray-700">NRI Student</label>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <input type="checkbox" id="is_foreign_national" name="is_foreign_national" value="true" {% if student and student.is_foreign_national %}checked{% endif %}
+                           class="rounded text-indigo-600 focus:ring-indigo-500">
+                    <label for="is_foreign_national" class="text-sm font-medium text-gray-700">Foreign National</label>
+                </div>
+                <div>
+                    <label for="nationality" class="block text-xs font-medium text-gray-700 mb-1">Nationality</label>
+                    <input type="text" id="nationality" name="nationality" value="{{ student.nationality if student else 'Indian' }}"
+                           class="w-full px-3 py-1.5 border border-gray-300 rounded-md text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                </div>
+            </div>
+
+            <!-- Consent Level -->
+            <div>
+                <label for="consent_level" class="block text-sm font-semibold text-gray-900 mb-1">DigiLocker Consent Tier</label>
+                <select id="consent_level" name="consent_level"
+                        class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                    <option value="1" {% if not student or student.consent_level == 1 %}selected{% endif %}>Tier 1 (Institution, Program, Year & Status)</option>
+                    <option value="2" {% if student and student.consent_level == 2 %}selected{% endif %}>Tier 2 (Full Authenticated Record + QR Badge)</option>
+                    <option value="0" {% if student and student.consent_level == 0 %}selected{% endif %}>Tier 0 (No consent captured - triggers R10 flag)</option>
+                </select>
+            </div>
+
+            <!-- BLOCK Override Justification (Strictly Required when intake full) -->
+            <div id="justification-block" class="hidden p-4 rounded-xl bg-amber-50 border border-amber-200 space-y-2">
+                <label for="override_justification" class="block text-sm font-bold text-amber-900">
+                    Intake Quota Exceeded &bull; Over-Admission Justification *
+                </label>
+                <p class="text-xs text-amber-700">
+                    This program has reached approved AICTE intake quota. A written justification is mandatory, will be recorded in the immutable audit chain, and will trigger high-priority AICTE review.
+                </p>
+                <textarea id="override_justification" name="override_justification" rows="3"
+                          class="w-full p-2.5 border border-amber-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none bg-white"
+                          placeholder="State legal approval reference, court direction, or AICTE sanctioned variance..."></textarea>
+            </div>
+
+            <!-- Submit -->
+            <div class="pt-4 flex items-center justify-end gap-3 border-t border-gray-200">
+                <a href="/institution/students" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition">Cancel</a>
+                <button type="submit" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shadow-sm transition">
+                    {% if student %}Save Changes{% else %}Add & Validate Student{% endif %}
+                </button>
+            </div>
+        </form>
     </div>
-  </form>
 </div>
-{% endblock %}
 
-{% block scripts %}
 <script>
-  const sel = document.getElementById('program_id');
-  const meter = document.getElementById('meter');
-  const box = document.getElementById('override-box');
-  const just = document.getElementById('override_justification');
-
-  const COLORS = { ALLOW: '#16a34a', WARN: '#d97706', BLOCK: '#dc2626' };
-  const MSGS = {
-    ALLOW: 'Seats available. Admission allowed.',
-    WARN: 'Intake is almost full (90% or more).',
-    BLOCK: 'Approved intake would be exceeded. A justification is required.'
-  };
-
-  async function checkIntake() {
-    const id = sel.value;
-    if (!id) { meter.classList.add('hidden'); box.classList.add('hidden'); just.required = false; return; }
-    try {
-      const res = await fetch('/api/v1/programs/' + id + '/intake-check', { credentials: 'same-origin' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const d = await res.json();
-
-      const decision = d.decision || 'ALLOW';
-      const remaining = d.remaining ?? d.remaining_seats ?? '?';
-      let pct = Number(d.fill_ratio ?? 0);
-      if (pct <= 1.5) pct = pct * 100;          // accept 0-1 ratio or a percent
-
-      meter.classList.remove('hidden');
-      document.getElementById('meter-text').textContent =
-        remaining + ' seats remaining · ' + Math.round(pct) + '% filled';
-      const badge = document.getElementById('meter-badge');
-      badge.textContent = decision;
-      badge.style.background = COLORS[decision];
-      const bar = document.getElementById('meter-bar');
-      bar.style.width = Math.min(pct, 100) + '%';
-      bar.style.background = COLORS[decision];
-      const msg = document.getElementById('meter-msg');
-      msg.textContent = MSGS[decision] || '';
-      msg.style.color = COLORS[decision];
-
-      // Justification box only on BLOCK
-      const blocked = decision === 'BLOCK';
-      box.classList.toggle('hidden', !blocked);
-      just.required = blocked;
-    } catch (e) {
-      console.error('Intake check failed', e);
-      meter.classList.remove('hidden');
-      document.getElementById('meter-text').textContent = 'Seat meter unavailable';
+async function checkIntake(programId) {
+    if (!programId) {
+        document.getElementById('intake-badge').innerText = 'Select a program';
+        document.getElementById('intake-badge').className = 'px-2 py-0.5 rounded font-semibold bg-gray-200 text-gray-800';
+        document.getElementById('intake-details').innerText = 'Seat availability updates live when you choose a program.';
+        document.getElementById('justification-block').classList.add('hidden');
+        return;
     }
-  }
+    try {
+        const res = await fetch(`/institution/programs/${programId}/intake-check`);
+        if (!res.ok) return;
+        const data = await res.json();
 
-  sel.addEventListener('change', checkIntake);
-  checkIntake();   // run once on load (edit page already has a program selected)
+        const badge = document.getElementById('intake-badge');
+        badge.innerText = `${data.decision} (${data.enrolled_regular}/${data.approved_intake} seats filled)`;
+
+        if (data.decision === 'BLOCK') {
+            badge.className = 'px-2 py-0.5 rounded font-semibold bg-red-100 text-red-800 border border-red-300';
+            document.getElementById('intake-details').innerText = 'Quota full! Further regular admissions will violate AICTE limits.';
+            document.getElementById('justification-block').classList.remove('hidden');
+        } else if (data.decision === 'WARN') {
+            badge.className = 'px-2 py-0.5 rounded font-semibold bg-amber-100 text-amber-800 border border-amber-300';
+            document.getElementById('intake-details').innerText = `Warning: ${data.remaining_seats} seat(s) remaining (${(data.fill_ratio * 100).toFixed(1)}% full).`;
+            document.getElementById('justification-block').classList.add('hidden');
+        } else {
+            badge.className = 'px-2 py-0.5 rounded font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300';
+            document.getElementById('intake-details').innerText = `Capacity available: ${data.remaining_seats} regular seats remaining.`;
+            document.getElementById('justification-block').classList.add('hidden');
+        }
+    } catch (err) {
+        console.error(err);
+    }
+}
+// Run on load if editing
+document.addEventListener('DOMContentLoaded', () => {
+    const pSelect = document.getElementById('program_id');
+    if (pSelect && pSelect.value) checkIntake(pSelect.value);
+});
 </script>
 {% endblock %}

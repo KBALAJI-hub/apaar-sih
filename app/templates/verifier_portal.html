@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+    <!-- Header -->
+    <div class="text-center space-y-1 pb-2">
+        <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            Authorized Verifier Portal
+        </span>
+        <h1 class="text-2xl font-extrabold text-gray-900 tracking-tight">AICTE Credential Verification</h1>
+        <p class="text-xs text-gray-500">Tiered verification honoring student DigiLocker consent (SIH PS 26263)</p>
+    </div>
+
+    <!-- Rate limit / Error Alert -->
+    {% if error %}
+    <div class="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800 flex items-start gap-3">
+        <svg class="w-5 h-5 text-red-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+        <div>
+            <div class="font-bold">Verification Notice</div>
+            <div class="text-xs mt-0.5">{{ error }}</div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Search Card -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 sm:p-8">
+        <form method="POST" action="/verify" class="space-y-4">
+            <div>
+                <label for="apaar_id" class="block text-sm font-semibold text-gray-900 mb-1">
+                    Student APAAR ID (12 Digits)
+                </label>
+                <div class="flex gap-3">
+                    <input type="text" id="apaar_id" name="apaar_id" maxlength="12" pattern="\d{12}" required
+                           value="{{ searched_apaar or '' }}"
+                           placeholder="Enter 12-digit numeric APAAR ID, e.g. 100000000001"
+                           class="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                    <button type="submit" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm shadow-sm transition flex items-center gap-2 shrink-0">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Verify Record
+                    </button>
+                </div>
+                <div class="flex items-center justify-between mt-2 text-xs text-gray-400">
+                    <span>Enforces 30 lookups/min rate limit per verifier.</span>
+                    <span>Demo ID: <code class="bg-gray-100 px-1 py-0.5 rounded text-gray-700">100000000001</code></span>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Result Display -->
+    {% if result_ready %}
+        <!-- TIER -1: NOT FOUND -->
+        {% if tier == -1 %}
+        <div class="bg-white rounded-xl border border-red-200 shadow-sm overflow-hidden">
+            <div class="bg-red-50 px-6 py-4 border-b border-red-100 flex items-center justify-between">
+                <span class="text-sm font-bold text-red-900 uppercase">Verification Result</span>
+                <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-800">NOT FOUND</span>
+            </div>
+            <div class="p-6 text-center space-y-2">
+                <div class="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </div>
+                <div class="text-lg font-extrabold text-red-900">No record</div>
+                <p class="text-xs text-gray-500 max-w-md mx-auto">
+                    No enrolled student matching APAAR ID <span class="font-mono font-semibold text-gray-700">{{ searched_apaar }}</span> was found in any AICTE affiliated institution.
+                </p>
+            </div>
+        </div>
+
+        <!-- TIER 0: NO CONSENT GRANTED -->
+        {% elif tier == 0 %}
+        <div class="bg-white rounded-xl border border-amber-200 shadow-sm overflow-hidden">
+            <div class="bg-amber-50 px-6 py-4 border-b border-amber-100 flex items-center justify-between">
+                <span class="text-sm font-bold text-amber-900 uppercase">Consent Protected (Tier 0)</span>
+                <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800">CONSENT WITHHELD</span>
+            </div>
+            <div class="p-6 text-center space-y-3">
+                <div class="w-12 h-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m0 0v2m0-2h2m-2 0H10m10-7V7a4 4 0 00-8 0v4h8z"></path></svg>
+                </div>
+                <div class="text-base font-extrabold text-amber-900">
+                    APAAR valid, student has not consented to share details
+                </div>
+                <p class="text-xs text-gray-600 max-w-lg mx-auto leading-relaxed">
+                    The submitted APAAR ID is active in the AICTE registry, but the student's DigiLocker consent preference is set to Tier 0. To access academic verification details, the student must update their consent at <span class="font-mono text-indigo-600">/student/consent</span>.
+                </p>
+            </div>
+        </div>
+
+        <!-- TIER 1: DIRECTORY VERIFICATION -->
+        {% elif tier == 1 %}
+        <div class="bg-white rounded-xl border border-blue-200 shadow-sm overflow-hidden">
+            <div class="bg-blue-50 px-6 py-4 border-b border-blue-100 flex items-center justify-between">
+                <span class="text-sm font-bold text-blue-900 uppercase">Directory Verification (Tier 1)</span>
+                <span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-800">BASIC TIER</span>
+            </div>
+            <div class="p-6 sm:p-8 space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                    <div>
+                        <div class="text-xs font-semibold text-gray-400 uppercase">Affiliated Institution</div>
+                        <div class="font-bold text-gray-900 mt-0.5">{{ institution.name if institution else 'N/A' }}</div>
+                        <div class="text-xs text-gray-500 font-mono">AIC-ID: {{ institution.aicte_id if institution else '' }}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs font-semibold text-gray-400 uppercase">Academic Program</div>
+                        <div class="font-bold text-gray-900 mt-0.5">{{ program.name if program else 'N/A' }}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs font-semibold text-gray-400 uppercase">Admission Year</div>
+                        <div class="font-semibold text-gray-800 mt-0.5">{{ student.admission_year }}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs font-semibold text-gray-400 uppercase">Enrollment Status</div>
+                        <div class="mt-0.5">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800">
+                                {{ student.status }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-3 bg-gray-50 rounded-lg text-xs text-gray-500 border border-gray-200">
+                    <strong>Note:</strong> Personal identifiable attributes (name, DOB, full profile) and cryptographic badges require Tier 2 consent from the student.
+                </div>
+            </div>
+        </div>
+
+        <!-- TIER 2: FULL RECORD + AUTHENTICITY BADGE + QR -->
+        {% elif tier == 2 %}
+        <div class="bg-white rounded-2xl border-2 border-emerald-500 shadow-lg overflow-hidden">
+            <div class="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-5 text-white flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"></path></svg>
+                    </div>
+                    <div>
+                        <div class="text-lg font-black tracking-wide uppercase">Full Authentic Credential (Tier 2)</div>
+                        <div class="text-xs text-emerald-100">Cryptographically signed with AICTE Ed25519 Root Key</div>
+                    </div>
+                </div>
+                <span class="px-2.5 py-1 rounded-md text-xs font-bold bg-white text-emerald-800 shadow-sm">AUTHENTIC</span>
+            </div>
+
+            <div class="p-6 sm:p-8 space-y-6">
+                <!-- Record details & QR code layout -->
+                <div class="flex flex-col md:flex-row gap-6 items-start">
+                    <!-- Student details -->
+                    <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-6 text-sm">
+                        <div>
+                            <div class="text-xs font-semibold text-gray-400 uppercase">Student Full Name</div>
+                            <div class="font-extrabold text-gray-900 text-base mt-0.5">{{ student.full_name }}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-400 uppercase">Institutional Roll ID</div>
+                            <div class="font-mono font-semibold text-gray-800 mt-0.5">{{ student.student_id }}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-400 uppercase">Date of Birth / Gender</div>
+                            <div class="font-medium text-gray-800 mt-0.5">{{ student.dob }} &bull; {{ student.gender }}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-400 uppercase">Category / Nationality</div>
+                            <div class="font-medium text-gray-800 mt-0.5">{{ student.category }} &bull; {{ student.nationality }}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-400 uppercase">Institution</div>
+                            <div class="font-semibold text-gray-900 mt-0.5">{{ institution.name if institution else 'N/A' }}</div>
+                            <div class="text-xs text-gray-500 font-mono">AIC-ID: {{ institution.aicte_id if institution else '' }}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-400 uppercase">Program</div>
+                            <div class="font-semibold text-gray-900 mt-0.5">{{ program.name if program else 'N/A' }}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-400 uppercase">Admission Year / Type</div>
+                            <div class="font-medium text-gray-800 mt-0.5">{{ student.admission_year }} &bull; {{ student.admission_type }}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs font-semibold text-gray-400 uppercase">Status</div>
+                            <div class="mt-0.5">
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    {{ student.status }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Authenticity QR Badge -->
+                    <div class="w-full md:w-44 shrink-0 flex flex-col items-center p-3 bg-gray-50 border border-gray-200 rounded-xl text-center">
+                        <img src="/verify/record/{{ student.student_id }}/qr" alt="AICTE Verification QR Code" class="w-36 h-36 rounded-lg shadow-sm border border-gray-200">
+                        <span class="mt-2 text-xs font-bold text-gray-700">Scan to Verify</span>
+                        <span class="text-[10px] text-gray-400 font-mono">Ed25519 Sealed</span>
+                    </div>
+                </div>
+
+                <!-- Footer Link -->
+                <div class="pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
+                    <span>Ed25519 Sig: <code class="font-mono text-gray-700">{{ student.record_signature[:16] if student.record_signature else 'N/A' }}...</code></span>
+                    <a href="/verify/record/{{ student.student_id }}?sig={{ student.record_signature }}" target="_blank" class="text-indigo-600 hover:text-indigo-800 font-semibold underline">
+                        Open Public Certificate &rarr;
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    {% endif %}
+</div>
+{% endblock %}

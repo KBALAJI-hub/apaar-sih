@@ -101,12 +101,22 @@ def get_current_user(
 def require_role(*roles: str):
     """
     Dependency factory that checks if the logged-in user possesses one of the required roles.
-    Returns 401 if unauthenticated and 403 if the role does not match.
+    Redirects unauthenticated browser requests to /login, returns 401 for API requests.
+    Returns 403 if the role does not match.
     """
     def role_checker(
+        request: Request,
         user: Optional[User] = Depends(get_current_user),
     ) -> User:
         if not user:
+            # If requesting from browser (HTML request) or non-API route, redirect to /login
+            accept = request.headers.get("accept", "")
+            is_api = request.url.path.startswith("/api")
+            if "text/html" in accept or not is_api:
+                raise HTTPException(
+                    status_code=status.HTTP_303_SEE_OTHER,
+                    headers={"Location": "/login"},
+                )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required",

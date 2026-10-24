@@ -2,104 +2,150 @@
 {% block title %}Institution Dashboard · APAAR Verify{% endblock %}
 
 {% block content %}
-<div class="flex items-center justify-between mb-6">
-  <div>
-    <h1 class="text-2xl font-bold text-indigo-900">Institution Dashboard</h1>
-    <p class="text-sm text-slate-500">{{ institution_name or 'Institution name (placeholder)' }}</p>
-  </div>
-  <a href="/institution/upload" class="bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-semibold px-4 py-2 rounded">Upload CSV</a>
-</div>
-
-<!-- ===== 5 KPI cards ===== -->
-{% set fill = fill_percent if fill_percent is defined else 87 %}
-{% set score = compliance_score if compliance_score is defined else 74 %}
-
-<div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-  <div class="bg-white rounded-xl shadow p-4">
-    <div class="text-xs uppercase text-slate-500">Total Students</div>
-    <div class="text-3xl font-bold mt-1">{{ total_students if total_students is defined else 520 }}</div>
-  </div>
-
-  <div class="bg-white rounded-xl shadow p-4">
-    <div class="text-xs uppercase text-slate-500">Approved Intake</div>
-    <div class="text-3xl font-bold mt-1">{{ approved_intake if approved_intake is defined else 600 }}</div>
-  </div>
-
-  <!-- Fill %: red above 100, amber 90-100, green otherwise -->
-  <div class="bg-white rounded-xl shadow p-4">
-    <div class="text-xs uppercase text-slate-500">Fill %</div>
-    <div class="text-3xl font-bold mt-1
-      {% if fill > 100 %}text-red-600{% elif fill >= 90 %}text-amber-600{% else %}text-green-600{% endif %}">
-      {{ fill }}%
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-4 border-b border-gray-200">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">{{ institution.name }}</h1>
+            <p class="text-sm text-gray-500">AICTE ID: <span class="font-mono font-medium text-gray-700">{{ institution.aicte_id }}</span> &bull; State: {{ institution.state }} &bull; Type: {{ institution.type }}</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <a href="/institution/upload" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 shadow-sm transition">
+                <svg class="w-4 h-4 mr-1.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                Upload CSV
+            </a>
+            <a href="/institution/students/new" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                Add Student
+            </a>
+        </div>
     </div>
-  </div>
 
-  <div class="bg-white rounded-xl shadow p-4">
-    <div class="text-xs uppercase text-slate-500">Open Flags</div>
-    <div class="text-3xl font-bold mt-1 text-amber-600">{{ open_flags if open_flags is defined else 12 }}</div>
-  </div>
+    <!-- 5 KPI Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <!-- 1. Total Students -->
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Enrolled</div>
+            <div class="mt-2 text-2xl font-extrabold text-gray-900">{{ total_students }}</div>
+            <div class="mt-1 text-xs text-gray-500">Active students</div>
+        </div>
 
-  <!-- Compliance score: green 80+, amber 50-79, red below 50 -->
-  <div class="bg-white rounded-xl shadow p-4">
-    <div class="text-xs uppercase text-slate-500">Compliance Score</div>
-    <div class="text-3xl font-bold mt-1
-      {% if score >= 80 %}text-green-600{% elif score >= 50 %}text-amber-600{% else %}text-red-600{% endif %}">
-      {{ score }}<span class="text-base text-slate-400">/100</span>
+        <!-- 2. Approved Intake -->
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Approved Intake</div>
+            <div class="mt-2 text-2xl font-extrabold text-gray-900">{{ approved_intake }}</div>
+            <div class="mt-1 text-xs text-gray-500">Across all programs</div>
+        </div>
+
+        <!-- 3. Fill % -->
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Fill Ratio</div>
+            <div class="mt-2 text-2xl font-extrabold {% if fill_ratio > 100 %}text-red-600{% elif fill_ratio >= 90 %}text-amber-600{% else %}text-emerald-600{% endif %}">
+                {{ fill_ratio }}%
+            </div>
+            <div class="mt-1 text-xs text-gray-500">{% if fill_ratio > 100 %}Exceeds AICTE Quota{% else %}Quota utilization{% endif %}</div>
+        </div>
+
+        <!-- 4. Open Flags -->
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Open Flags</div>
+            <div class="mt-2 text-2xl font-extrabold {% if open_flags_count > 0 %}text-red-600{% else %}text-emerald-600{% endif %}">
+                {{ open_flags_count }}
+            </div>
+            <div class="mt-1 text-xs text-gray-500">Requires review</div>
+        </div>
+
+        <!-- 5. Compliance Score -->
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Compliance Score</div>
+            <div class="mt-2 text-2xl font-extrabold {% if compliance_score >= 80 %}text-emerald-600{% elif compliance_score >= 60 %}text-amber-600{% else %}text-red-600{% endif %}">
+                {{ compliance_score }}/100
+            </div>
+            <div class="mt-1 text-xs text-gray-500">Institutional health</div>
+        </div>
     </div>
-  </div>
-</div>
 
-<!-- ===== Chart area (filled in a later phase) ===== -->
-<div class="bg-white rounded-xl shadow p-4 mb-8">
-  <h2 class="font-semibold mb-3">Intake vs Enrolment by Program</h2>
-  <div id="chart-placeholder"
-       class="h-64 flex items-center justify-center border-2 border-dashed rounded text-slate-400 text-sm">
-    Chart will appear here
-  </div>
-  <!-- Later: replace the div above with <canvas id="intakeChart"></canvas> -->
-</div>
+    <!-- Intake Quotas by Program -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 class="text-base font-bold text-gray-900">Academic Programs & Intake Status</h2>
+            <span class="text-xs text-gray-500">Real-time seat monitoring</span>
+        </div>
+        <div class="divide-y divide-gray-100">
+            {% for prog in programs_data %}
+            <div class="px-6 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div class="space-y-1">
+                    <div class="text-sm font-semibold text-gray-900">{{ prog.name }}</div>
+                    <div class="text-xs text-gray-500">Year: {{ prog.academic_year }} &bull; Level: {{ prog.level }}</div>
+                </div>
+                <div class="flex items-center gap-6">
+                    <div class="w-48">
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-gray-500">Enrolled: {{ prog.enrolled_regular }} / {{ prog.approved_intake }}</span>
+                            <span class="font-semibold {% if prog.fill_ratio > 1.0 %}text-red-600{% elif prog.fill_ratio >= 0.9 %}text-amber-600{% else %}text-emerald-600{% endif %}">{{ (prog.fill_ratio * 100)|round(1) }}%</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                           {% set bar_w = [prog.fill_ratio * 100, 100]|min %}
+<div class="h-2 rounded-full {% if prog.fill_ratio > 1.0 %}bg-red-500{% elif prog.fill_ratio >= 0.9 %}bg-amber-500{% else %}bg-emerald-500{% endif %}"
+     data-w="{{ bar_w|round(1) }}"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="px-2.5 py-1 text-xs font-semibold rounded-full {% if prog.decision == 'BLOCK' %}bg-red-100 text-red-800 border border-red-200{% elif prog.decision == 'WARN' %}bg-amber-100 text-amber-800 border border-amber-200{% else %}bg-emerald-100 text-emerald-800 border border-emerald-200{% endif %}">
+                        {{ prog.decision }}
+                    </span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
 
-<!-- ===== Flags table (filled in a later phase) ===== -->
-<div class="bg-white rounded-xl shadow p-4">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="font-semibold">Recent Open Flags</h2>
-    <a href="/institution/flags" class="text-sm text-indigo-700 underline">View all</a>
-  </div>
-  <div class="overflow-x-auto">
-    <table class="w-full text-sm">
-      <thead>
-        <tr class="text-left text-slate-500 border-b">
-          <th class="py-2 pr-4">Severity</th>
-          <th class="py-2 pr-4">Rule</th>
-          <th class="py-2 pr-4">Student</th>
-          <th class="py-2">Message</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% if flags %}
-          {% for f in flags %}
-          <tr class="border-b">
-            <td class="py-2 pr-4"><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
-            <td class="py-2 pr-4">{{ f.rule_code }}</td>
-            <td class="py-2 pr-4">{{ f.student_id or '-' }}</td>
-            <td class="py-2">{{ f.message }}</td>
-          </tr>
-          {% endfor %}
+    <!-- Recent Open Validation Flags -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+            <h2 class="text-base font-bold text-gray-900">Recent Validation Flags</h2>
+            <a href="/institution/students" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">View all students &rarr;</a>
+        </div>
+        {% if recent_flags %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50 text-gray-600">
+                    <tr>
+                        <th class="px-6 py-3 text-left font-semibold">Rule</th>
+                        <th class="px-6 py-3 text-left font-semibold">Severity</th>
+                        <th class="px-6 py-3 text-left font-semibold">Message</th>
+                        <th class="px-6 py-3 text-left font-semibold">Recommended Action</th>
+                        <th class="px-6 py-3 text-left font-semibold">Logged</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for flag in recent_flags %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-6 py-3.5 font-mono font-medium text-gray-900">{{ flag.rule_code }}</td>
+                        <td class="px-6 py-3.5">
+                            <span class="badge-{{ flag.severity|lower }}">{{ flag.severity }}</span>
+                        </td>
+                        <td class="px-6 py-3.5 text-gray-700">{{ flag.message }}</td>
+                        <td class="px-6 py-3.5 text-gray-500 text-xs">{{ flag.recommended_action }}</td>
+                        <td class="px-6 py-3.5 text-gray-400 text-xs whitespace-nowrap">{{ flag.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
         {% else %}
-          <!-- Placeholder rows until P1 passes `flags` -->
-          <tr class="border-b text-slate-400">
-            <td class="py-2 pr-4"><span class="badge badge-HIGH">HIGH</span></td>
-            <td class="py-2 pr-4">R4</td><td class="py-2 pr-4">S1023</td>
-            <td class="py-2">Duplicate APAAR ID (placeholder)</td>
-          </tr>
-          <tr class="text-slate-400">
-            <td class="py-2 pr-4"><span class="badge badge-MEDIUM">MEDIUM</span></td>
-            <td class="py-2 pr-4">R8</td><td class="py-2 pr-4">S1040</td>
-            <td class="py-2">Foreign national with nationality India (placeholder)</td>
-          </tr>
+        <div class="p-8 text-center text-sm text-gray-500">
+            No open validation flags. Institution is in full compliance!
+        </div>
         {% endif %}
-      </tbody>
-    </table>
-  </div>
+    </div>
 </div>
+{% block scripts %}
+<script>
+  // Set progress bar widths from data-w attributes
+  document.querySelectorAll('[data-w]').forEach(function (el) {
+    el.style.width = el.dataset.w + '%';
+  });
+</script>
+{% endblock %}
 {% endblock %}

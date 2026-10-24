@@ -1,88 +1,108 @@
 {% extends "base.html" %}
-{% block title %}Upload result · APAAR Verify{% endblock %}
 
 {% block content %}
-<h1 class="text-2xl font-bold text-indigo-900 mb-4">Upload result</h1>
+<div class="space-y-6 max-w-5xl mx-auto">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-4 border-b border-gray-200">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Upload Validation Results</h1>
+            <p class="text-sm text-gray-500">Automated AICTE compliance report and batch processing summary</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <a href="/institution/upload" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition">
+                Upload Another File
+            </a>
+            <a href="/institution/students" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition">
+                View Enrolled Students &rarr;
+            </a>
+        </div>
+    </div>
 
-<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-  <div class="bg-white rounded-xl shadow p-4 border-l-4 border-green-500">
-    <div class="text-xs uppercase text-slate-500">Accepted</div>
-    <div class="text-3xl font-bold text-green-600">{{ accepted or 0 }}</div>
-  </div>
-  <div class="bg-white rounded-xl shadow p-4 border-l-4 border-amber-500">
-    <div class="text-xs uppercase text-slate-500">Accepted with warnings</div>
-    <div class="text-3xl font-bold text-amber-600">{{ warned or 0 }}</div>
-  </div>
-  <div class="bg-white rounded-xl shadow p-4 border-l-4 border-red-500">
-    <div class="text-xs uppercase text-slate-500">Rejected</div>
-    <div class="text-3xl font-bold text-red-600">{{ rejected_count if rejected_count is defined else (rejected|length if rejected else 0) }}</div>
-  </div>
-</div>
+    <!-- 4 Outcome Summary Cards -->
+    <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <!-- Total Rows -->
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+            <div class="text-xs font-semibold text-gray-500 uppercase">Processed Rows</div>
+            <div class="mt-2 text-2xl font-extrabold text-gray-900">{{ total_rows }}</div>
+            <div class="mt-1 text-xs text-gray-400">Total records in CSV</div>
+        </div>
 
-<div class="bg-white rounded-xl shadow p-4 mb-6">
-  <div class="flex items-center justify-between mb-3">
-    <h2 class="font-semibold">Rejected rows</h2>
-    {% if rejected %}
-      {% if error_csv_url %}
-        <a href="{{ error_csv_url }}" class="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded">Download error CSV</a>
-      {% else %}
-        <!-- Fallback: build the CSV from the table below -->
-        <button type="button" id="err-csv-btn" class="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded">Download error CSV</button>
-      {% endif %}
+        <!-- Accepted Clean -->
+        <div class="bg-white p-5 rounded-xl border border-emerald-200 shadow-sm bg-emerald-50/20">
+            <div class="text-xs font-semibold text-emerald-700 uppercase">Accepted Clean</div>
+            <div class="mt-2 text-2xl font-extrabold text-emerald-600">{{ accepted_clean_count }}</div>
+            <div class="mt-1 text-xs text-emerald-600">Saved with zero flags</div>
+        </div>
+
+        <!-- Accepted With Warnings -->
+        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm bg-amber-50/20">
+            <div class="text-xs font-semibold text-amber-700 uppercase">Accepted (Flagged)</div>
+            <div class="mt-2 text-2xl font-extrabold text-amber-600">{{ accepted_warning_count }}</div>
+            <div class="mt-1 text-xs text-amber-600">Saved with review flags</div>
+        </div>
+
+        <!-- Rejected Rows -->
+        <div class="bg-white p-5 rounded-xl border border-red-200 shadow-sm bg-red-50/20">
+            <div class="text-xs font-semibold text-red-700 uppercase">Rejected Rows</div>
+            <div class="mt-2 text-2xl font-extrabold text-red-600">{{ rejected_count }}</div>
+            <div class="mt-1 text-xs text-red-600">Not saved to database</div>
+        </div>
+    </div>
+
+    <!-- Error CSV Download Banner (if rejected > 0) -->
+    {% if has_error_csv %}
+    <div class="p-5 rounded-xl bg-red-50 border border-red-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+            <h3 class="text-base font-bold text-red-900">Download Rejection Report</h3>
+            <p class="text-xs text-red-700 mt-0.5">
+                {{ rejected_count }} row(s) failed critical compliance rules (R1, R2, R9, R11). You can download an annotated error CSV containing exact failure causes to correct and re-upload.
+            </p>
+        </div>
+        <a href="/institution/upload/error-csv" class="shrink-0 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-semibold shadow-sm transition inline-flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+            Download Error CSV
+        </a>
+    </div>
+
+    <!-- Rejection Details Preview Table -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-gray-50">
+            <h2 class="text-sm font-bold text-gray-900">Rejected Rows Inspection (Showing up to 50)</h2>
+            <span class="badge-high text-xs px-2 py-0.5">{{ rejected_count }} Errors</span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-xs">
+                <thead class="bg-gray-50 text-gray-600">
+                    <tr>
+                        <th class="px-4 py-3 text-left font-semibold">Row #</th>
+                        <th class="px-4 py-3 text-left font-semibold">Submitted APAAR</th>
+                        <th class="px-4 py-3 text-left font-semibold">Student Name</th>
+                        <th class="px-4 py-3 text-left font-semibold">Program</th>
+                        <th class="px-4 py-3 text-left font-semibold text-red-700">Rejection Reason(s)</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                    {% for row in rejected_rows %}
+                    <tr class="hover:bg-red-50/30 transition">
+                        <td class="px-4 py-3 text-gray-400 font-mono">{{ loop.index }}</td>
+                        <td class="px-4 py-3 font-mono font-medium {% if not row.apaar_id %}text-red-500 italic{% else %}text-gray-900{% endif %}">
+                            {{ row.apaar_id or '(Missing APAAR)' }}
+                        </td>
+                        <td class="px-4 py-3 font-medium text-gray-900">{{ row.full_name or '(Empty)' }}</td>
+                        <td class="px-4 py-3 text-gray-600">{{ row.program_name or '(Empty)' }}</td>
+                        <td class="px-4 py-3 font-medium text-red-700">{{ row.rejection_reason }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-emerald-50 rounded-xl border border-emerald-200 p-8 text-center text-emerald-800">
+        <svg class="w-12 h-12 text-emerald-500 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        <h3 class="text-lg font-bold text-emerald-900">Clean Upload Batch!</h3>
+        <p class="text-sm text-emerald-700 mt-1">All student rows successfully passed mandatory AICTE checks and have been stored.</p>
+    </div>
     {% endif %}
-  </div>
-
-  <div class="overflow-x-auto">
-    <table class="w-full text-sm" id="rejected-table">
-      <thead>
-        <tr class="text-left text-slate-500 border-b">
-          <th class="py-2 pr-4">Row</th>
-          <th class="py-2 pr-4">APAAR ID</th>
-          <th class="py-2 pr-4">Rule</th>
-          <th class="py-2">Reason</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in rejected or [] %}
-        <tr class="border-b">
-          <td class="py-2 pr-4">{{ r.row_number }}</td>
-          <td class="py-2 pr-4 font-mono">{{ r.apaar_id or '(missing)' }}</td>
-          <td class="py-2 pr-4"><span class="badge badge-HIGH">{{ r.rule_code }}</span></td>
-          <td class="py-2">{{ r.message }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="4" class="py-6 text-center text-slate-400">No rows were rejected.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
 </div>
-
-<div class="flex gap-3">
-  <a href="/institution/flags" class="bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-semibold px-4 py-2 rounded">View flags</a>
-  <a href="/institution/students" class="border px-4 py-2 rounded text-sm text-slate-600">View students</a>
-  <a href="/institution/upload" class="border px-4 py-2 rounded text-sm text-slate-600">Upload another file</a>
-</div>
-{% endblock %}
-
-{% block scripts %}
-<script>
-  const btn = document.getElementById('err-csv-btn');
-  if (btn) {
-    btn.addEventListener('click', function () {
-      const rows = [['row', 'apaar_id', 'rule_code', 'reason']];
-      document.querySelectorAll('#rejected-table tbody tr').forEach(function (tr) {
-        const c = Array.from(tr.children).map(function (td) {
-          return '"' + td.textContent.trim().replace(/"/g, '""') + '"';
-        });
-        if (c.length === 4) rows.push(c);
-      });
-      const blob = new Blob([rows.map(function (r) { return r.join(','); }).join('\n')], { type: 'text/csv' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'rejected_rows.csv';
-      a.click();
-    });
-  }
-</script>
 {% endblock %}

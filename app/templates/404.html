@@ -2,10 +2,16 @@
 {% block title %}Not found · APAAR Verify{% endblock %}
 
 {% block content %}
-<div class="max-w-lg mx-auto bg-white rounded-xl shadow p-10 text-center mt-8">
-  <div class="text-6xl font-bold text-indigo-700 mb-2">404</div>
-  <h1 class="text-xl font-semibold mb-2">Page not found</h1>
-  <p class="text-slate-600 mb-6">The page you are looking for does not exist or has moved.</p>
-  <a href="/" class="inline-block bg-indigo-700 hover:bg-indigo-800 text-white px-5 py-2 rounded font-semibold">Go to home</a>
+<div class="max-w-md mx-auto text-center py-16 px-4">
+    <div class="w-16 h-16 bg-gray-100 text-gray-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-xl border border-gray-200">
+        404
+    </div>
+    <h1 class="text-2xl font-bold text-gray-900 mb-2">Page Not Found</h1>
+    <p class="text-sm text-gray-600 mb-6">
+        The requested resource, student record, or portal route could not be found.
+    </p>
+    <a href="/" class="inline-flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold transition">
+        Return to Home
+    </a>
 </div>
 {% endblock %}
