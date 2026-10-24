@@ -45,6 +45,11 @@ class Program(SQLModel, table=True):
     academic_year: str  # e.g. "2024-25"
     approved_intake: int = Field(default=60)
     supernumerary_cap: float = Field(default=0.10)  # 10% supernumerary quota
+    course: Optional[str] = Field(default=None)
+    programme: Optional[str] = Field(default=None)
+    course_type: Optional[str] = Field(default=None)
+    shift: Optional[str] = Field(default=None)
+    availability: Optional[str] = Field(default=None)
 
 
 class ApaarRegistry(SQLModel, table=True):

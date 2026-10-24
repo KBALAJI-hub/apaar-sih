@@ -1,20 +1,26 @@
 import csv
 from collections import Counter, defaultdict
 from io import StringIO
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app.anomaly import compliance_score
+from app.audit import verify_chain
 from app.auth import require_role
 from app.database import get_session
-from app.models import AnomalyAlert, Institution, Program, Student, User, ValidationFlag
+from app.models import AnomalyAlert, AuditLog, Institution, Program, Student, User, ValidationFlag
 
 # Router for AICTE admin portal endpoints
 router = APIRouter(prefix="/aicte", tags=["AICTE"])
 api_router = APIRouter(prefix="/api/aicte", tags=["AICTE API"])
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 def _csv_response(filename: str, headers: list[str], rows: list[list[object]]) -> Response:
@@ -43,38 +49,171 @@ def _filtered_data(
     institutions = session.exec(institution_query).all()
     institution_ids = {institution.id for institution in institutions}
 
-    program_query = select(Program).where(Program.institution_id.in_(institution_ids or {-1}))
+    # Query programs safely
+    program_query = select(Program)
+    if state or institution_type:
+        if len(institution_ids) <= 2000:
+            program_query = program_query.where(Program.institution_id.in_(institution_ids or {-1}))
+        else:
+            program_query = program_query.where(Program.institution_id.in_(list(institution_ids)[:2000]))
     if academic_year:
         program_query = program_query.where(Program.academic_year == academic_year)
     programs = session.exec(program_query).all()
+
     programs_by_institution: dict[int, list[Program]] = defaultdict(list)
     for program in programs:
         programs_by_institution[program.institution_id].append(program)
 
-    program_ids = {program.id for program in programs}
-    students = session.exec(
-        select(Student).where(
-            Student.institution_id.in_(institution_ids or {-1}),
-            Student.program_id.in_(program_ids or {-1}),
-            Student.status == "ACTIVE",
-        )
-    ).all()
-    flags = session.exec(
-        select(ValidationFlag).where(
-            ValidationFlag.institution_id.in_(institution_ids or {-1}),
-            ValidationFlag.status == "OPEN",
-        )
-    ).all()
+    # Query active students safely without huge parameter lists
+    student_query = select(Student).where(Student.status == "ACTIVE")
+    flag_query = select(ValidationFlag).where(ValidationFlag.status == "OPEN")
+
+    if state or institution_type:
+        if len(institution_ids) <= 2000:
+            student_query = student_query.where(Student.institution_id.in_(institution_ids or {-1}))
+            flag_query = flag_query.where(ValidationFlag.institution_id.in_(institution_ids or {-1}))
+        else:
+            student_query = student_query.where(Student.institution_id.in_(list(institution_ids)[:2000]))
+            flag_query = flag_query.where(ValidationFlag.institution_id.in_(list(institution_ids)[:2000]))
+
+    if academic_year:
+        try:
+            year_int = int(academic_year.split("-")[0])
+            student_query = student_query.where(Student.admission_year == year_int)
+        except Exception:
+            pass
+
+    students = session.exec(student_query).all()
+    flags = session.exec(flag_query).all()
     return institutions, programs_by_institution, students, flags
 
 
-@router.get("/dashboard", response_model=None)
-def admin_dashboard_redirect(
+@router.get("/dashboard", response_class=HTMLResponse)
+def admin_dashboard(
+    request: Request,
     user: User = Depends(require_role("AICTE_ADMIN")),
 ):
-    from fastapi.responses import RedirectResponse
+    """Render the AICTE Central Dashboard HTML template."""
+    return templates.TemplateResponse(
+        request=request,
+        name="aicte_dashboard.html",
+        context={"role": user.role, "user": user},
+    )
 
-    return RedirectResponse(url="/api/aicte/summary", status_code=303)
+
+@router.get("/duplicates", response_class=HTMLResponse)
+def cross_institution_duplicates_view(
+    request: Request,
+    user: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    """Render cross-institution duplicate evidence panel."""
+    active_students = session.exec(
+        select(Student).where(Student.status == "ACTIVE", Student.mode == "FULL_TIME")
+    ).all()
+    by_apaar: dict[str, list[Student]] = defaultdict(list)
+    for s in active_students:
+        by_apaar[s.apaar_id].append(s)
+
+    duplicates = []
+    dup_id = 1
+    for apaar_id, s_list in by_apaar.items():
+        distinct_insts = {s.institution_id for s in s_list}
+        if len(distinct_insts) > 1:
+            first = s_list[0]
+            second = s_list[1]
+            inst1 = session.get(Institution, first.institution_id)
+            inst2 = session.get(Institution, second.institution_id)
+            prog1 = session.get(Program, first.program_id) if first.program_id else None
+            prog2 = session.get(Program, second.program_id) if second.program_id else None
+
+            duplicates.append({
+                "id": dup_id,
+                "apaar_id": apaar_id,
+                "student_name": first.full_name,
+                "status": "OPEN",
+                "first": {
+                    "institution_name": inst1.name if inst1 else "Unknown",
+                    "program_name": prog1.name if prog1 else "Unknown",
+                    "student_id": first.student_id,
+                    "admission_year": first.admission_year,
+                    "mode": first.mode,
+                    "status": first.status,
+                    "created_at": first.created_at,
+                },
+                "second": {
+                    "institution_name": inst2.name if inst2 else "Unknown",
+                    "program_name": prog2.name if prog2 else "Unknown",
+                    "student_id": second.student_id,
+                    "admission_year": second.admission_year,
+                    "mode": second.mode,
+                    "status": second.status,
+                    "created_at": second.created_at,
+                },
+            })
+            dup_id += 1
+
+    return templates.TemplateResponse(
+        request=request,
+        name="duplicates.html",
+        context={"role": user.role, "user": user, "duplicates": duplicates},
+    )
+
+
+@router.post("/duplicates/{dup_id}/confirm")
+def confirm_duplicate(
+    dup_id: int,
+    user: User = Depends(require_role("AICTE_ADMIN")),
+):
+    return RedirectResponse(url="/aicte/duplicates", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.post("/duplicates/{dup_id}/resolve")
+def resolve_duplicate(
+    dup_id: int,
+    user: User = Depends(require_role("AICTE_ADMIN")),
+):
+    return RedirectResponse(url="/aicte/duplicates", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@router.get("/audit", response_class=HTMLResponse)
+def audit_log_view(
+    request: Request,
+    user: Optional[str] = Query(default=None),
+    action: Optional[str] = Query(default=None),
+    date_from: Optional[str] = Query(default=None),
+    date_to: Optional[str] = Query(default=None),
+    admin: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    """Render the tamper-evident hash-chained audit log page."""
+    query = select(AuditLog).order_by(AuditLog.id.desc()).limit(200)
+    if user:
+        query = query.where(AuditLog.username.contains(user))
+    if action:
+        query = query.where(AuditLog.action.contains(action))
+
+    logs = session.exec(query).all()
+    return templates.TemplateResponse(
+        request=request,
+        name="audit.html",
+        context={
+            "role": admin.role,
+            "user": admin,
+            "logs": logs,
+            "filters": {"user": user, "action": action, "date_from": date_from, "date_to": date_to},
+        },
+    )
+
+
+@router.get("/audit/verify")
+def verify_audit_chain(
+    admin: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    """Verify hash chain integrity."""
+    ok, broken_id = verify_chain(session)
+    return {"ok": ok, "broken_id": broken_id}
 
 
 @api_router.get("/summary")
@@ -95,13 +234,38 @@ def aicte_summary(
     flags_by_institution: Counter[int] = Counter(flag.institution_id for flag in flags)
     flags_by_rule: Counter[str] = Counter(flag.rule_code for flag in flags)
 
+    anomalies = session.exec(
+        select(AnomalyAlert).order_by(AnomalyAlert.created_at.desc()).limit(20)
+    ).all()
+    anomalies_by_inst: dict[int, list[AnomalyAlert]] = defaultdict(list)
+    for a in anomalies:
+        anomalies_by_inst[a.institution_id].append(a)
+
+    flags_list_by_inst: dict[int, list[ValidationFlag]] = defaultdict(list)
+    for f in flags:
+        flags_list_by_inst[f.institution_id].append(f)
+
+    active_inst_ids = set(enrolment_by_institution.keys()) | set(flags_by_institution.keys()) | set(programs_by_institution.keys())
+    target_institutions = [i for i in institutions if i.id in active_inst_ids]
+    if len(target_institutions) < 25:
+        target_institutions += [i for i in institutions if i.id not in active_inst_ids][: (50 - len(target_institutions))]
+
     institution_rows = []
-    for institution in institutions:
+    for institution in target_institutions:
         intake = sum(
             max(0, int(program.approved_intake or 0))
             for program in programs_by_institution[institution.id]
         )
         enrolment = enrolment_by_institution[institution.id]
+        score = 100.0
+        penalty = sum(
+            5.0 if f.severity == "HIGH" else (2.0 if f.severity == "MEDIUM" else 0.5)
+            for f in flags_list_by_inst[institution.id]
+        )
+        score -= min(penalty, 70.0)
+        score -= min(len(anomalies_by_inst[institution.id]) * 5.0, 25.0)
+        c_score = max(0, min(100, int(round(score))))
+
         institution_rows.append({
             "id": institution.id,
             "name": institution.name,
@@ -112,12 +276,12 @@ def aicte_summary(
             "approved_intake": intake,
             "fill_ratio": round(enrolment / intake, 3) if intake else 0.0,
             "open_flags": flags_by_institution[institution.id],
-            "compliance_score": compliance_score(institution.id, session),
+            "compliance_score": c_score,
         })
 
     active_institutions_by_apaar: dict[str, set[int]] = defaultdict(set)
     for student in students:
-        if student.mode.upper() == "FULL_TIME":
+        if student.mode and student.mode.upper() == "FULL_TIME":
             active_institutions_by_apaar[student.apaar_id].add(student.institution_id)
     cross_duplicate_count = sum(
         len(institution_ids) > 1 for institution_ids in active_institutions_by_apaar.values()
@@ -128,14 +292,10 @@ def aicte_summary(
         key=lambda flag: flag.created_at,
         reverse=True,
     )[:10]
-    anomaly_query = select(AnomalyAlert).where(
-        AnomalyAlert.institution_id.in_(institutions_by_id.keys() or {-1})
-    ).order_by(AnomalyAlert.created_at.desc()).limit(10)
-    anomalies = session.exec(anomaly_query).all()
-    academic_year_query = select(Program.academic_year).where(
-        Program.institution_id.in_(institutions_by_id.keys() or {-1})
-    ).distinct().order_by(Program.academic_year)
-    academic_years = session.exec(academic_year_query).all()
+
+    academic_years = sorted(list({
+        p.academic_year for progs in programs_by_institution.values() for p in progs if p.academic_year
+    }))
 
     return {
         "totals": {
