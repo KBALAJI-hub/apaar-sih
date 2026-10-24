@@ -35,6 +35,9 @@ def _settings(session: Session) -> dict[str, str]:
     values.update({setting.key: setting.value for setting in settings})
     return values
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
 
 def _csv_response(filename: str, headers: list[str], rows: list[list[object]]) -> Response:
     output = StringIO()
@@ -62,6 +65,7 @@ def _filtered_data(
     institutions = session.exec(institution_query).all()
     institution_ids = {institution.id for institution in institutions}
 
+    # Query programs safely
     program_query = select(Program)
     if state or institution_type:
         if len(institution_ids) <= 2000:
@@ -76,6 +80,7 @@ def _filtered_data(
     for program in programs:
         programs_by_institution[program.institution_id].append(program)
 
+    # Query active students safely without huge parameter lists
     student_query = select(Student).where(Student.status == "ACTIVE")
     flag_query = select(ValidationFlag).where(ValidationFlag.status == "OPEN")
 
@@ -470,7 +475,7 @@ def aicte_summary(
         "totals": {
             "institutions": len(institutions),
             "total_enrolment": sum(enrolment_by_institution.values()),
-            "total_intake": sum(row["approved_intake"] for row in institution_rows),
+            "total_intake": sum(int(p.approved_intake or 0) for progs in programs_by_institution.values() for p in progs),
             "flagged_institutions": sum(count > 0 for count in flags_by_institution.values()),
             "cross_institution_duplicates": cross_duplicate_count,
         },

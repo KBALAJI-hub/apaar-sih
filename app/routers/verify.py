@@ -18,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app.audit import log_action
-from app.auth import get_current_user
+from app.auth import get_current_user, require_role
 from app.database import get_session
 from app.models import Institution, Program, Student, User, VerificationLog, utc_now
 from app.security import (
@@ -445,3 +445,158 @@ def get_student_qr_code(
     verification_url = f"{base_url}/verify/record/{student.student_id}?sig={sig}"
     qr_png = make_qr_png(verification_url)
     return Response(content=qr_png, media_type="image/png")
+
+
+# ---------------------------------------------------------------------------
+# 5. Student Dashboard & Certificate Views (SIH PS 26263 D3, D4, Req 10)
+# ---------------------------------------------------------------------------
+@router.get("/student/dashboard", response_class=HTMLResponse)
+def student_dashboard(
+    request: Request,
+    user: User = Depends(require_role("STUDENT")),
+    session: Session = Depends(get_session),
+):
+    """
+    Dedicated Student Dashboard:
+    - Displays verified academic profile & APAAR credentials.
+    - Displays live Ed25519 tamper-evident signature badge & QR verification code.
+    - Quick consent level selector (Tier 0 / Tier 1 / Tier 2) with immediate save.
+    - 'Who looked me up' real-time transparency audit trail from VerificationLog.
+    - One-click access to official printable certificate.
+    """
+    student = None
+    if user.apaar_id:
+        student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
+    if not student and user.username:
+        student = session.exec(select(Student).where(Student.student_id == user.username)).first()
+    if not student:
+        # Fallback to first student in db if demo user
+        student = session.exec(select(Student)).first()
+
+    institution = None
+    program = None
+    is_signature_valid = False
+    lookups: List[VerificationLog] = []
+
+    if student:
+        institution = session.get(Institution, student.institution_id)
+        program = session.get(Program, student.program_id)
+
+        # Ensure Ed25519 signature is generated and up to date
+        if not student.record_signature:
+            student.record_signature = sign_record(student, session)
+            session.add(student)
+            session.commit()
+
+        is_signature_valid = verify_signature(student, student.record_signature, session=session)
+
+        # Fetch who looked me up
+        lookups = session.exec(
+            select(VerificationLog)
+            .where(VerificationLog.apaar_id == student.apaar_id)
+            .order_by(VerificationLog.id.desc())
+        ).all()
+
+    base_url = str(request.base_url).rstrip("/")
+    verify_url = f"{base_url}/verify/record/{student.student_id}?sig={student.record_signature}" if student else ""
+    qr_url = f"{base_url}/verify/record/{student.student_id}/qr" if student else ""
+
+    return templates.TemplateResponse(
+        request=request,
+        name="student_dashboard.html",
+        context={
+            "user": user,
+            "student": student,
+            "institution": institution,
+            "program": program,
+            "is_signature_valid": is_signature_valid,
+            "lookups": lookups,
+            "verify_url": verify_url,
+            "qr_url": qr_url,
+            "role": user.role,
+        },
+    )
+
+
+@router.post("/student/dashboard/consent")
+def update_student_dashboard_consent(
+    request: Request,
+    consent_level: int = Form(...),
+    user: User = Depends(require_role("STUDENT")),
+    session: Session = Depends(get_session),
+):
+    """Update student consent tier directly from the student dashboard."""
+    student = None
+    if user.apaar_id:
+        student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
+    if not student and user.username:
+        student = session.exec(select(Student).where(Student.student_id == user.username)).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student record not found")
+
+    student.consent_level = consent_level
+    student.consent_timestamp = utc_now()
+    session.add(student)
+
+    log_action(
+        session=session,
+        user_id=user.id,
+        username=user.username,
+        action="UPDATE_CONSENT",
+        entity="Student",
+        entity_id=student.id,
+        details=f"Student {student.apaar_id} updated consent to Tier {consent_level} from dashboard",
+    )
+    session.commit()
+
+    return RedirectResponse(
+        url="/student/dashboard",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.get("/certificate/{student_id}", response_class=HTMLResponse)
+def view_certificate(
+    student_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: Optional[User] = Depends(get_current_user),
+):
+    """
+    Render official printable degree-style certificate with APAAR ID,
+    institution details, live QR code, and Ed25519 digital signature snippet.
+    """
+    student = session.exec(select(Student).where(Student.student_id == student_id)).first()
+    if not student and student_id.isdigit():
+        student = session.get(Student, int(student_id))
+    if not student:
+        student = session.exec(select(Student).where(Student.apaar_id == student_id)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student record not found for certificate generation")
+
+    institution = session.get(Institution, student.institution_id)
+    program = session.get(Program, student.program_id)
+
+    sig = student.record_signature or sign_record(student, session)
+    if not student.record_signature:
+        session.add(student)
+        session.commit()
+
+    base_url = str(request.base_url).rstrip("/")
+    verify_url = f"{base_url}/verify/record/{student.student_id}?sig={sig}"
+    qr_src = f"{base_url}/verify/record/{student.student_id}/qr"
+
+    return templates.TemplateResponse(
+        request=request,
+        name="certificate.html",
+        context={
+            "student": student,
+            "institution": institution,
+            "program": program,
+            "signature": sig,
+            "verify_url": verify_url,
+            "qr_src": qr_src,
+            "role": user.role if user else None,
+        },
+    )

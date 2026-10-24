@@ -37,14 +37,18 @@ IS_POSTGRES = DATABASE_URL.startswith("postgresql")
 IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
 # ---------------------------------------------------------------------------
-# Engine Configuration with Resilient Connection Pooling
 # ---------------------------------------------------------------------------
+# Engine Configuration with Resilient Connection Pooling & Local Fallback
+# ---------------------------------------------------------------------------
+LOCAL_SQLITE_URL = "sqlite:///apaar.db"
+fallback_engine = create_engine(
+    LOCAL_SQLITE_URL,
+    echo=False,
+    connect_args={"check_same_thread": False},
+)
+
 if IS_SQLITE:
-    engine = create_engine(
-        DATABASE_URL,
-        echo=False,
-        connect_args={"check_same_thread": False},
-    )
+    engine = fallback_engine
 else:
     # Supabase / PostgreSQL Session Pooler configuration:
     # - pool_pre_ping=True: validates connections before query execution
@@ -107,9 +111,18 @@ def init_default_settings(session: Session) -> None:
 
 def create_db_and_tables():
     """Create all registered SQLModel tables and ensure baseline settings."""
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
-        init_default_settings(session)
+    try:
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            init_default_settings(session)
+    except Exception as e:
+        import logging
+        logging.getLogger("uvicorn.error").warning(
+            f"[DB WARNING] Failed to initialize primary database ({e}). Ensuring local fallback database tables."
+        )
+        SQLModel.metadata.create_all(fallback_engine)
+        with Session(fallback_engine) as session:
+            init_default_settings(session)
 
 
 def reset_db():
@@ -133,31 +146,97 @@ def reset_db():
 
 
 def get_session() -> Generator[Session, None, None]:
-    """FastAPI dependency yielding an active SQLModel session."""
-    with Session(engine) as session:
+    """
+    FastAPI dependency yielding an active SQLModel session.
+    Prioritizes the primary Supabase PostgreSQL database (13k+ institutions & 58k+ programs).
+    If Supabase drops connection or becomes unavailable, seamlessly falls back to
+    the local SQLite backup (apaar.db).
+    """
+    if IS_POSTGRES:
+        try:
+            with Session(engine) as session:
+                session.exec(text("SELECT 1"))
+                yield session
+                return
+        except Exception as exc:
+            import logging
+            logging.getLogger("uvicorn.error").warning(
+                f"[DATABASE FAILOVER] Primary Supabase connection failed ({exc}). Falling back to local SQLite backup."
+            )
+
+    with Session(fallback_engine) as session:
         yield session
+
+
+def get_db_session() -> Session:
+    """
+    Synchronous helper returning an active SQLModel Session.
+    Falls back to local SQLite if Supabase is unreachable.
+    """
+    if IS_POSTGRES:
+        try:
+            session = Session(engine)
+            session.exec(text("SELECT 1"))
+            return session
+        except Exception as exc:
+            import logging
+            logging.getLogger("uvicorn.error").warning(
+                f"[DATABASE FAILOVER] Primary Supabase connection failed in get_db_session ({exc}). Falling back to local SQLite."
+            )
+    return Session(fallback_engine)
 
 
 def check_db_connection() -> Dict[str, Any]:
     """
-    Diagnostic helper to test database connectivity, dialect, and latency.
+    Diagnostic helper to test database connectivity, dialect, and fallback status.
     Useful for health checks and status reporting.
     """
+    if IS_POSTGRES:
+        try:
+            with engine.connect() as conn:
+                version = conn.execute(text("SELECT version();")).scalar()
+                return {
+                    "status": "healthy",
+                    "mode": "primary (supabase postgresql)",
+                    "dialect": "postgresql",
+                    "connected": True,
+                    "version": version,
+                }
+        except Exception as e:
+            try:
+                with fallback_engine.connect() as conn:
+                    v_fallback = conn.execute(text("SELECT sqlite_version();")).scalar()
+                    return {
+                        "status": "degraded (fallback active)",
+                        "mode": "fallback (local sqlite)",
+                        "dialect": "sqlite",
+                        "connected": True,
+                        "version": v_fallback,
+                        "primary_error": str(e),
+                    }
+            except Exception as fb_err:
+                return {
+                    "status": "unhealthy",
+                    "mode": "failed",
+                    "connected": False,
+                    "primary_error": str(e),
+                    "fallback_error": str(fb_err),
+                }
+
     try:
         with engine.connect() as conn:
-            version = conn.execute(
-                text("SELECT sqlite_version();" if IS_SQLITE else "SELECT version();")
-            ).scalar()
+            version = conn.execute(text("SELECT sqlite_version();")).scalar()
             return {
                 "status": "healthy",
-                "dialect": "sqlite" if IS_SQLITE else "postgresql",
+                "mode": "sqlite",
+                "dialect": "sqlite",
                 "connected": True,
                 "version": version,
             }
     except Exception as e:
         return {
             "status": "unhealthy",
-            "dialect": "sqlite" if IS_SQLITE else "postgresql",
+            "dialect": "sqlite",
             "connected": False,
             "error": str(e),
         }

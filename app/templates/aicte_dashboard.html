@@ -113,55 +113,73 @@
 
   const RED = '#dc2626', AMBER = '#d97706', GREEN = '#16a34a', INDIGO = '#4f46e5';
 
-  // ---- Charts (created once, then updated in place) ----
-  const fillChart = new Chart($('fillChart'), {
-    type: 'bar',
-    data: { labels: [], datasets: [{ label: 'Fill %', data: [], backgroundColor: [] }] },
-    options: {
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, title: { display: true, text: 'Fill %' } } }
-    }
-  });
-  const flagChart = new Chart($('flagChart'), {
-    type: 'bar',
-    data: { labels: [], datasets: [{ label: 'Open flags', data: [], backgroundColor: INDIGO }] },
-    options: {
-      maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
-    }
-  });
+  function formatNum(v) {
+    if (v === undefined || v === null || v === '-') return '-';
+    const n = Number(v);
+    return isNaN(n) ? String(v) : n.toLocaleString('en-IN');
+  }
 
-  // ---- Helpers to read P2's JSON, tolerant to small key differences ----
+  // ---- Safe Charts Initialization ----
+  let fillChart = null;
+  let flagChart = null;
+
+  function initCharts() {
+    if (typeof Chart === 'undefined') return;
+    const fillEl = $('fillChart');
+    const flagEl = $('flagChart');
+    if (fillEl && !fillChart) {
+      fillChart = new Chart(fillEl, {
+        type: 'bar',
+        data: { labels: [], datasets: [{ label: 'Fill %', data: [], backgroundColor: [] }] },
+        options: {
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, title: { display: true, text: 'Fill %' } } }
+        }
+      });
+    }
+    if (flagEl && !flagChart) {
+      flagChart = new Chart(flagEl, {
+        type: 'bar',
+        data: { labels: [], datasets: [{ label: 'Open flags', data: [], backgroundColor: INDIGO }] },
+        options: {
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+        }
+      });
+    }
+  }
+
+  // ---- Helpers to read JSON ----
   function fillPct(i) {
     const intake = Number(pick(i, 'approved_intake', 'intake', 'total_intake') || 0);
     const enrol = Number(pick(i, 'enrolment', 'enrollment', 'total_enrolment', 'actual_enrolment') || 0);
     if (intake > 0 && enrol >= 0 && pick(i, 'enrolment', 'enrollment', 'total_enrolment', 'actual_enrolment') !== undefined)
       return enrol / intake * 100;
     let r = Number(pick(i, 'fill_ratio', 'fill_percent') || 0);
-    return r <= 3 ? r * 100 : r;       // accept 0-1 ratio or percent
+    return r <= 3 ? r * 100 : r;
   }
   const scoreClass = s => s >= 80 ? 'text-green-600' : (s >= 60 ? 'text-amber-600' : 'text-red-600');
   const fillColor = p => p > 100 ? RED : (p >= 90 ? AMBER : GREEN);
 
   function fillSelect(sel, values, allLabel) {
+    if (!sel) return;
     const cur = sel.value;
     const uniq = Array.from(new Set(values.filter(Boolean))).sort();
     sel.innerHTML = '<option value="">' + allLabel + '</option>' +
       uniq.map(v => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(v) + '</option>').join('');
   }
 
-  // Dropdown options are remembered, so filtering never empties the lists
   const seen = { state: new Set(), type: new Set(), year: new Set() };
 
   function render(d) {
     const t = d.totals || d;
-    $('k-institutions').textContent = pick(t, 'institutions', 'total_institutions') ?? '-';
-    $('k-enrolment').textContent = pick(t, 'total_enrolment', 'enrolment', 'total_enrollment') ?? '-';
-    $('k-intake').textContent = pick(t, 'total_intake', 'intake') ?? '-';
-    $('k-flagged').textContent = pick(t, 'flagged_institutions', 'flagged') ?? '-';
-    $('k-dups').textContent = pick(t, 'cross_institution_duplicates', 'cross_duplicates', 'duplicates', 'cross_institution_duplicate_count') ?? '-';
+    if ($('k-institutions')) $('k-institutions').textContent = formatNum(pick(t, 'institutions', 'total_institutions'));
+    if ($('k-enrolment')) $('k-enrolment').textContent = formatNum(pick(t, 'total_enrolment', 'enrolment', 'total_enrollment'));
+    if ($('k-intake')) $('k-intake').textContent = formatNum(pick(t, 'total_intake', 'intake'));
+    if ($('k-flagged')) $('k-flagged').textContent = formatNum(pick(t, 'flagged_institutions', 'flagged'));
+    if ($('k-dups')) $('k-dups').textContent = formatNum(pick(t, 'cross_institution_duplicates', 'cross_duplicates', 'duplicates', 'cross_institution_duplicate_count'));
 
     const insts = d.institutions || d.per_institution || [];
 
@@ -176,84 +194,107 @@
     fillSelect($('f-type'), Array.from(seen.type), 'All types');
     fillSelect($('f-year'), Array.from(seen.year), 'All years');
 
-    // fill ratio chart
-    const pcts = insts.map(fillPct);
-    fillChart.data.labels = insts.map(i => pick(i, 'name', 'institution_name', 'aicte_id'));
-    fillChart.data.datasets[0].data = pcts.map(p => Math.round(p * 10) / 10);
-    fillChart.data.datasets[0].backgroundColor = pcts.map(fillColor);
-    fillChart.update('none');
+    // charts
+    initCharts();
+    if (fillChart) {
+      const chartInsts = insts.slice(0, 20);
+      const pcts = chartInsts.map(fillPct);
+      fillChart.data.labels = chartInsts.map(i => pick(i, 'name', 'institution_name', 'aicte_id'));
+      fillChart.data.datasets[0].data = pcts.map(p => Math.round(p * 10) / 10);
+      fillChart.data.datasets[0].backgroundColor = pcts.map(fillColor);
+      fillChart.update('none');
+    }
 
-    // flags by rule chart (object {R1: 3} or list [{rule_code, count}])
-    let fr = d.flags_by_rule || d.flags_by_rule_code || {};
-    let entries = Array.isArray(fr) ? fr.map(x => [x.rule_code || x.code, x.count]) : Object.entries(fr);
-    entries.sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }));
-    flagChart.data.labels = entries.map(e => e[0]);
-    flagChart.data.datasets[0].data = entries.map(e => e[1]);
-    flagChart.update('none');
+    if (flagChart) {
+      let fr = d.flags_by_rule || d.flags_by_rule_code || {};
+      let entries = Array.isArray(fr) ? fr.map(x => [x.rule_code || x.code, x.count]) : Object.entries(fr);
+      entries.sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }));
+      flagChart.data.labels = entries.map(e => e[0]);
+      flagChart.data.datasets[0].data = entries.map(e => e[1]);
+      flagChart.update('none');
+    }
 
     // ranking table: lowest compliance first
-    const ranked = insts.slice().sort((a, b) =>
-      Number(pick(a, 'compliance_score') ?? 100) - Number(pick(b, 'compliance_score') ?? 100));
-    $('rank-body').innerHTML = ranked.length ? ranked.map((i, n) => {
-      const p = fillPct(i), sc = Number(pick(i, 'compliance_score') ?? 0);
-      const id = pick(i, 'id', 'institution_id');
-      return '<tr class="border-b">' +
-        '<td class="py-2 pr-3 text-slate-400">' + (n + 1) + '</td>' +
-        '<td class="py-2 pr-3 font-medium">' + esc(pick(i, 'name', 'institution_name')) + '</td>' +
-        '<td class="py-2 pr-3">' + esc(pick(i, 'state')) + '</td>' +
-        '<td class="py-2 pr-3 font-semibold" style="color:' + fillColor(p) + '">' + p.toFixed(0) + '%</td>' +
-        '<td class="py-2 pr-3">' + esc(pick(i, 'open_flags', 'open_flags_count') ?? 0) + '</td>' +
-        '<td class="py-2 pr-3 font-bold ' + scoreClass(sc) + '">' + sc + '</td>' +
-        '<td class="py-2 text-right"><a class="text-indigo-700 underline" href="/aicte/institutions/' + esc(id) + '">Drill down</a></td>' +
-        '</tr>';
-    }).join('') : '<tr><td colspan="7" class="py-6 text-center text-slate-400">No institutions match the filters.</td></tr>';
+    if ($('rank-body')) {
+      const ranked = insts.slice().sort((a, b) =>
+        Number(pick(a, 'compliance_score') ?? 100) - Number(pick(b, 'compliance_score') ?? 100));
+      $('rank-body').innerHTML = ranked.length ? ranked.map((i, n) => {
+        const p = fillPct(i), sc = Number(pick(i, 'compliance_score') ?? 0);
+        const id = pick(i, 'id', 'institution_id');
+        return '<tr class="border-b">' +
+          '<td class="py-2 pr-3 text-slate-400">' + (n + 1) + '</td>' +
+          '<td class="py-2 pr-3 font-medium">' + esc(pick(i, 'name', 'institution_name')) + '</td>' +
+          '<td class="py-2 pr-3">' + esc(pick(i, 'state')) + '</td>' +
+          '<td class="py-2 pr-3 font-semibold" style="color:' + fillColor(p) + '">' + p.toFixed(0) + '%</td>' +
+          '<td class="py-2 pr-3">' + esc(pick(i, 'open_flags', 'open_flags_count') ?? 0) + '</td>' +
+          '<td class="py-2 pr-3 font-bold ' + scoreClass(sc) + '">' + sc + '</td>' +
+          '<td class="py-2 text-right"><a class="text-indigo-700 underline" href="/aicte/institutions/' + esc(id) + '">Drill down</a></td>' +
+          '</tr>';
+      }).join('') : '<tr><td colspan="7" class="py-6 text-center text-slate-400">No institutions match the filters.</td></tr>';
+    }
 
     // alerts panel
-    const high = d.latest_high_flags || d.high_flags || d.latest_high_alerts || [];
-    $('high-flags').innerHTML = high.length ? high.slice(0, 10).map(f =>
-      '<li class="border-l-4 border-red-500 pl-2">' +
-        '<span class="badge badge-HIGH">' + esc(pick(f, 'rule_code', 'code')) + '</span> ' +
-        '<span class="text-slate-500 text-xs">' + esc(pick(f, 'institution_name', 'institution')) + '</span>' +
-        '<div>' + esc(pick(f, 'message', 'reason')) + '</div></li>'
-    ).join('') : '<li class="text-slate-400">No HIGH flags.</li>';
+    if ($('high-flags')) {
+      const high = d.latest_high_flags || d.high_flags || d.latest_high_alerts || [];
+      $('high-flags').innerHTML = high.length ? high.slice(0, 10).map(f =>
+        '<li class="border-l-4 border-red-500 pl-2">' +
+          '<span class="badge badge-HIGH">' + esc(pick(f, 'rule_code', 'code')) + '</span> ' +
+          '<span class="text-slate-500 text-xs">' + esc(pick(f, 'institution_name', 'institution')) + '</span>' +
+          '<div>' + esc(pick(f, 'message', 'reason')) + '</div></li>'
+      ).join('') : '<li class="text-slate-400">No HIGH flags.</li>';
+    }
 
-    const an = d.anomaly_alerts || d.anomalies || [];
-    $('anomalies').innerHTML = an.length ? an.slice(0, 10).map(a =>
-      '<li class="border-l-4 border-amber-500 pl-2">' +
-        '<span class="badge badge-MEDIUM">' + esc(pick(a, 'code')) + '</span> ' +
-        '<span class="text-slate-500 text-xs">' + esc(pick(a, 'institution_name', 'institution')) + '</span>' +
-        '<div>' + esc(pick(a, 'reason', 'message')) + '</div>' +
-        (pick(a, 'recommended_action') ? '<div class="text-xs text-slate-500">Action: ' + esc(a.recommended_action) + '</div>' : '') +
-        '</li>'
-    ).join('') : '<li class="text-slate-400">No anomaly alerts.</li>';
+    if ($('anomalies')) {
+      const an = d.anomaly_alerts || d.anomalies || [];
+      $('anomalies').innerHTML = an.length ? an.slice(0, 10).map(a =>
+        '<li class="border-l-4 border-amber-500 pl-2">' +
+          '<span class="badge badge-MEDIUM">' + esc(pick(a, 'code')) + '</span> ' +
+          '<span class="text-slate-500 text-xs">' + esc(pick(a, 'institution_name', 'institution')) + '</span>' +
+          '<div>' + esc(pick(a, 'reason', 'message')) + '</div>' +
+          (pick(a, 'recommended_action') ? '<div class="text-xs text-slate-500">Action: ' + esc(a.recommended_action) + '</div>' : '') +
+          '</li>'
+      ).join('') : '<li class="text-slate-400">No anomaly alerts.</li>';
+    }
   }
 
   async function load() {
     const q = new URLSearchParams();
-    if ($('f-state').value) q.set('state', $('f-state').value);
-    if ($('f-type').value) q.set('institution_type', $('f-type').value);
-    if ($('f-year').value) q.set('academic_year', $('f-year').value);
+    if ($('f-state') && $('f-state').value) q.set('state', $('f-state').value);
+    if ($('f-type') && $('f-type').value) q.set('institution_type', $('f-type').value);
+    if ($('f-year') && $('f-year').value) q.set('academic_year', $('f-year').value);
     const err = $('load-error');
     try {
       const res = await fetch(SUMMARY_URL + (q.toString() ? '?' + q : ''), { credentials: 'same-origin' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      render(await res.json());
-      err.classList.add('hidden');
-      $('last-updated').textContent = new Date().toLocaleTimeString();
+      const data = await res.json();
+      render(data);
+      if (err) err.classList.add('hidden');
+      if ($('last-updated')) $('last-updated').textContent = new Date().toLocaleTimeString();
     } catch (e) {
       console.error('Summary load failed', e);
-      err.textContent = 'Could not load live data (' + e.message + '). Will retry.';
-      err.classList.remove('hidden');
+      if (err) {
+        err.textContent = 'Could not load live data (' + e.message + '). Will retry.';
+        err.classList.remove('hidden');
+      }
     }
   }
 
-  ['f-state', 'f-type', 'f-year'].forEach(id => $(id).addEventListener('change', load));
-  $('f-clear').addEventListener('click', () => {
-    ['f-state', 'f-type', 'f-year'].forEach(id => { $(id).value = ''; });
+  if ($('f-state')) $('f-state').addEventListener('change', load);
+  if ($('f-type')) $('f-type').addEventListener('change', load);
+  if ($('f-year')) $('f-year').addEventListener('change', load);
+  if ($('f-clear')) {
+    $('f-clear').addEventListener('click', () => {
+      ['f-state', 'f-type', 'f-year'].forEach(id => { if ($(id)) $(id).value = ''; });
+      load();
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    initCharts();
     load();
   });
-
+  // Also call load immediately in case DOMContentLoaded already fired
   load();
-  setInterval(load, 10000);   // auto-refresh, charts update in place
+  setInterval(load, 10000);
 </script>
 {% endblock %}
