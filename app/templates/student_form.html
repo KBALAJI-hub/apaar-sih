@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if student else 'Add' }} student · APAAR Verify{% endblock %}
+
+{% block content %}
+{% set s = student or {} %}
+<div class="max-w-3xl mx-auto">
+  <h1 class="text-2xl font-bold text-indigo-900 mb-4">{{ 'Edit student' if student else 'Add student' }}</h1>
+
+  <form method="post" class="bg-white rounded-xl shadow p-6 space-y-5" id="student-form">
+
+    <!-- ===== Program + live seat meter ===== -->
+    <div>
+      <label for="program_id" class="block text-sm font-medium mb-1">Program *</label>
+      <select id="program_id" name="program_id" required class="w-full border rounded px-3 py-2">
+        <option value="">Select a program</option>
+        {% for p in programs or [] %}
+          <option value="{{ p.id }}" {% if s.program_id and s.program_id|string == p.id|string %}selected{% endif %}>
+            {{ p.name }} ({{ p.academic_year }})
+          </option>
+        {% endfor %}
+      </select>
+
+      <!-- Seat meter (hidden until a program is chosen) -->
+      <div id="meter" class="hidden mt-3 border rounded p-3">
+        <div class="flex justify-between text-sm mb-1">
+          <span id="meter-text" class="font-medium"></span>
+          <span id="meter-badge" class="px-2 py-0.5 rounded text-xs font-bold text-white"></span>
+        </div>
+        <div class="w-full bg-slate-200 rounded h-3 overflow-hidden">
+          <div id="meter-bar" class="h-3 rounded" style="width:0%"></div>
+        </div>
+        <p id="meter-msg" class="text-xs mt-2"></p>
+      </div>
+
+      <!-- Justification: shown only when decision is BLOCK -->
+      <div id="override-box" class="hidden mt-3">
+        <label for="override_justification" class="block text-sm font-medium text-red-700 mb-1">
+          Intake exceeded. Justification required to override *
+        </label>
+        <textarea id="override_justification" name="override_justification" rows="3"
+                  class="w-full border border-red-300 rounded px-3 py-2"
+                  placeholder="Explain why this admission exceeds the approved intake. This is logged and flagged HIGH."></textarea>
+      </div>
+    </div>
+
+    <!-- ===== Identity ===== -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label for="apaar_id" class="block text-sm font-medium mb-1">APAAR ID (12 digits) *</label>
+        <input id="apaar_id" name="apaar_id" type="text" required maxlength="12" pattern="\d{12}"
+               value="{{ s.apaar_id or '' }}" {% if student %}readonly{% endif %}
+               class="w-full border rounded px-3 py-2 font-mono {% if student %}bg-slate-100{% endif %}">
+      </div>
+      <div>
+        <label for="student_id" class="block text-sm font-medium mb-1">Student ID / Roll no.</label>
+        <input id="student_id" name="student_id" type="text" value="{{ s.student_id or '' }}"
+               class="w-full border rounded px-3 py-2">
+      </div>
+      <div>
+        <label for="full_name" class="block text-sm font-medium mb-1">Full name *</label>
+        <input id="full_name" name="full_name" type="text" required value="{{ s.full_name or '' }}"
+               class="w-full border rounded px-3 py-2">
+      </div>
+      <div>
+        <label for="dob" class="block text-sm font-medium mb-1">Date of birth *</label>
+        <input id="dob" name="dob" type="date" required value="{{ s.dob or '' }}"
+               class="w-full border rounded px-3 py-2">
+      </div>
+      <div>
+        <label for="gender" class="block text-sm font-medium mb-1">Gender</label>
+        <select id="gender" name="gender" class="w-full border rounded px-3 py-2">
+          {% for g in ['Male', 'Female', 'Other'] %}
+            <option value="{{ g }}" {% if s.gender == g %}selected{% endif %}>{{ g }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="category" class="block text-sm font-medium mb-1">Category</label>
+        <select id="category" name="category" class="w-full border rounded px-3 py-2">
+          {% for c in ['General', 'OBC', 'SC', 'ST', 'EWS'] %}
+            <option value="{{ c }}" {% if s.category == c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <!-- ===== Admission ===== -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div>
+        <label for="admission_year" class="block text-sm font-medium mb-1">Admission year *</label>
+        <input id="admission_year" name="admission_year" type="number" min="2000" max="2100" required
+               value="{{ s.admission_year or '' }}" class="w-full border rounded px-3 py-2">
+      </div>
+      <div>
+        <label for="admission_type" class="block text-sm font-medium mb-1">Admission type</label>
+        <select id="admission_type" name="admission_type" class="w-full border rounded px-3 py-2">
+          {% for t in ['REGULAR', 'SUPERNUMERARY'] %}
+            <option value="{{ t }}" {% if s.admission_type == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="mode" class="block text-sm font-medium mb-1">Mode</label>
+        <select id="mode" name="mode" class="w-full border rounded px-3 py-2">
+          {% for m in ['FULL_TIME', 'PART_TIME'] %}
+            <option value="{{ m }}" {% if s.mode == m %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <!-- ===== NRI / OCI / FN ===== -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label for="nationality" class="block text-sm font-medium mb-1">Nationality</label>
+        <input id="nationality" name="nationality" type="text" value="{{ s.nationality or 'India' }}"
+               class="w-full border rounded px-3 py-2">
+      </div>
+      <div>
+        <label for="oci_status" class="block text-sm font-medium mb-1">OCI status</label>
+        <select id="oci_status" name="oci_status" class="w-full border rounded px-3 py-2">
+          {% for o in ['NONE', 'OCI'] %}
+            <option value="{{ o }}" {% if s.oci_status == o %}selected{% endif %}>{{ o }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" name="is_nri" value="true" {% if s.is_nri %}checked{% endif %}> NRI
+      </label>
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" name="is_foreign_national" value="true" {% if s.is_foreign_national %}checked{% endif %}> Foreign national
+      </label>
+      <label class="flex items-center gap-2 text-sm md:col-span-2">
+        <input type="checkbox" name="consent_given" value="true" {% if s.consent_level and s.consent_level > 0 %}checked{% endif %}>
+        Student consent captured
+      </label>
+    </div>
+
+    <div class="flex gap-3 pt-2">
+      <button type="submit" class="bg-indigo-700 hover:bg-indigo-800 text-white font-semibold px-6 py-2 rounded">Save</button>
+      <a href="/institution/students" class="px-6 py-2 rounded border text-slate-600">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const sel = document.getElementById('program_id');
+  const meter = document.getElementById('meter');
+  const box = document.getElementById('override-box');
+  const just = document.getElementById('override_justification');
+
+  const COLORS = { ALLOW: '#16a34a', WARN: '#d97706', BLOCK: '#dc2626' };
+  const MSGS = {
+    ALLOW: 'Seats available. Admission allowed.',
+    WARN: 'Intake is almost full (90% or more).',
+    BLOCK: 'Approved intake would be exceeded. A justification is required.'
+  };
+
+  async function checkIntake() {
+    const id = sel.value;
+    if (!id) { meter.classList.add('hidden'); box.classList.add('hidden'); just.required = false; return; }
+    try {
+      const res = await fetch('/api/v1/programs/' + id + '/intake-check', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const d = await res.json();
+
+      const decision = d.decision || 'ALLOW';
+      const remaining = d.remaining ?? d.remaining_seats ?? '?';
+      let pct = Number(d.fill_ratio ?? 0);
+      if (pct <= 1.5) pct = pct * 100;          // accept 0-1 ratio or a percent
+
+      meter.classList.remove('hidden');
+      document.getElementById('meter-text').textContent =
+        remaining + ' seats remaining · ' + Math.round(pct) + '% filled';
+      const badge = document.getElementById('meter-badge');
+      badge.textContent = decision;
+      badge.style.background = COLORS[decision];
+      const bar = document.getElementById('meter-bar');
+      bar.style.width = Math.min(pct, 100) + '%';
+      bar.style.background = COLORS[decision];
+      const msg = document.getElementById('meter-msg');
+      msg.textContent = MSGS[decision] || '';
+      msg.style.color = COLORS[decision];
+
+      // Justification box only on BLOCK
+      const blocked = decision === 'BLOCK';
+      box.classList.toggle('hidden', !blocked);
+      just.required = blocked;
+    } catch (e) {
+      console.error('Intake check failed', e);
+      meter.classList.remove('hidden');
+      document.getElementById('meter-text').textContent = 'Seat meter unavailable';
+    }
+  }
+
+  sel.addEventListener('change', checkIntake);
+  checkIntake();   // run once on load (edit page already has a program selected)
+</script>
+{% endblock %}

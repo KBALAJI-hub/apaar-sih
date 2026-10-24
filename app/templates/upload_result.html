@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Upload result · APAAR Verify{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold text-indigo-900 mb-4">Upload result</h1>
+
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+  <div class="bg-white rounded-xl shadow p-4 border-l-4 border-green-500">
+    <div class="text-xs uppercase text-slate-500">Accepted</div>
+    <div class="text-3xl font-bold text-green-600">{{ accepted or 0 }}</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4 border-l-4 border-amber-500">
+    <div class="text-xs uppercase text-slate-500">Accepted with warnings</div>
+    <div class="text-3xl font-bold text-amber-600">{{ warned or 0 }}</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4 border-l-4 border-red-500">
+    <div class="text-xs uppercase text-slate-500">Rejected</div>
+    <div class="text-3xl font-bold text-red-600">{{ rejected_count if rejected_count is defined else (rejected|length if rejected else 0) }}</div>
+  </div>
+</div>
+
+<div class="bg-white rounded-xl shadow p-4 mb-6">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="font-semibold">Rejected rows</h2>
+    {% if rejected %}
+      {% if error_csv_url %}
+        <a href="{{ error_csv_url }}" class="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded">Download error CSV</a>
+      {% else %}
+        <!-- Fallback: build the CSV from the table below -->
+        <button type="button" id="err-csv-btn" class="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold px-4 py-2 rounded">Download error CSV</button>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm" id="rejected-table">
+      <thead>
+        <tr class="text-left text-slate-500 border-b">
+          <th class="py-2 pr-4">Row</th>
+          <th class="py-2 pr-4">APAAR ID</th>
+          <th class="py-2 pr-4">Rule</th>
+          <th class="py-2">Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rejected or [] %}
+        <tr class="border-b">
+          <td class="py-2 pr-4">{{ r.row_number }}</td>
+          <td class="py-2 pr-4 font-mono">{{ r.apaar_id or '(missing)' }}</td>
+          <td class="py-2 pr-4"><span class="badge badge-HIGH">{{ r.rule_code }}</span></td>
+          <td class="py-2">{{ r.message }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="py-6 text-center text-slate-400">No rows were rejected.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="flex gap-3">
+  <a href="/institution/flags" class="bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-semibold px-4 py-2 rounded">View flags</a>
+  <a href="/institution/students" class="border px-4 py-2 rounded text-sm text-slate-600">View students</a>
+  <a href="/institution/upload" class="border px-4 py-2 rounded text-sm text-slate-600">Upload another file</a>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const btn = document.getElementById('err-csv-btn');
+  if (btn) {
+    btn.addEventListener('click', function () {
+      const rows = [['row', 'apaar_id', 'rule_code', 'reason']];
+      document.querySelectorAll('#rejected-table tbody tr').forEach(function (tr) {
+        const c = Array.from(tr.children).map(function (td) {
+          return '"' + td.textContent.trim().replace(/"/g, '""') + '"';
+        });
+        if (c.length === 4) rows.push(c);
+      });
+      const blob = new Blob([rows.map(function (r) { return r.join(','); }).join('\n')], { type: 'text/csv' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'rejected_rows.csv';
+      a.click();
+    });
+  }
+</script>
+{% endblock %}
