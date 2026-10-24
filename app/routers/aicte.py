@@ -1,20 +1,39 @@
 import csv
 from collections import Counter, defaultdict
 from io import StringIO
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app.anomaly import compliance_score
+from app.audit import log_action
 from app.auth import require_role
 from app.database import get_session
-from app.models import AnomalyAlert, Institution, Program, Student, User, ValidationFlag
+from app.models import AnomalyAlert, Institution, Program, Setting, Student, User, ValidationFlag
 
 # Router for AICTE admin portal endpoints
 router = APIRouter(prefix="/aicte", tags=["AICTE"])
 api_router = APIRouter(prefix="/api/aicte", tags=["AICTE API"])
+templates = Jinja2Templates(directory=str(Path(__file__).resolve().parent.parent / "templates"))
+
+SETTING_DEFAULTS = {
+    "intake_warn_threshold": "0.90",
+    "intake_block_threshold": "1.00",
+    "supernumerary_cap_default": "0.10",
+    "nri_outlier_threshold": "0.25",
+    "yoy_surge_threshold": "2.00",
+}
+
+
+def _settings(session: Session) -> dict[str, str]:
+    settings = session.exec(select(Setting)).all()
+    values = dict(SETTING_DEFAULTS)
+    values.update({setting.key: setting.value for setting in settings})
+    return values
 
 
 def _csv_response(filename: str, headers: list[str], rows: list[list[object]]) -> Response:
@@ -72,9 +91,165 @@ def _filtered_data(
 def admin_dashboard_redirect(
     user: User = Depends(require_role("AICTE_ADMIN")),
 ):
-    from fastapi.responses import RedirectResponse
-
     return RedirectResponse(url="/api/aicte/summary", status_code=303)
+
+
+@router.get("/reports/compliance-summary", response_class=HTMLResponse)
+def compliance_summary(
+    request: Request,
+    user: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    institutions = session.exec(select(Institution).order_by(Institution.state, Institution.name)).all()
+    rows = []
+    for institution in institutions:
+        programs = session.exec(
+            select(Program).where(Program.institution_id == institution.id)
+        ).all()
+        program_ids = [program.id for program in programs]
+        enrolment = len(
+            session.exec(
+                select(Student).where(
+                    Student.institution_id == institution.id,
+                    Student.program_id.in_(program_ids or {-1}),
+                    Student.status == "ACTIVE",
+                )
+            ).all()
+        )
+        intake = sum(max(0, int(program.approved_intake or 0)) for program in programs)
+        open_flags = len(
+            session.exec(
+                select(ValidationFlag).where(
+                    ValidationFlag.institution_id == institution.id,
+                    ValidationFlag.status == "OPEN",
+                )
+            ).all()
+        )
+        rows.append({
+            "name": institution.name,
+            "aicte_id": institution.aicte_id,
+            "state": institution.state,
+            "type": institution.type,
+            "enrolment": enrolment,
+            "intake": intake,
+            "fill_ratio": round(enrolment / intake, 3) if intake else 0.0,
+            "open_flags": open_flags,
+            "compliance_score": compliance_score(institution.id, session),
+        })
+    return templates.TemplateResponse(
+        request=request,
+        name="compliance_summary.html",
+        context={"rows": rows},
+    )
+
+
+@router.get("/settings", response_class=HTMLResponse)
+def aicte_settings_page(
+    request: Request,
+    user: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    return templates.TemplateResponse(
+        request=request,
+        name="aicte_settings.html",
+        context={"settings": _settings(session)},
+    )
+
+
+@router.post("/settings", response_class=HTMLResponse)
+def update_aicte_settings(
+    request: Request,
+    intake_warn_threshold: str = Form(...),
+    intake_block_threshold: str = Form(...),
+    supernumerary_cap_default: str = Form(...),
+    nri_outlier_threshold: str = Form(...),
+    yoy_surge_threshold: str = Form(...),
+    user: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    raw_values = {
+        "intake_warn_threshold": intake_warn_threshold,
+        "intake_block_threshold": intake_block_threshold,
+        "supernumerary_cap_default": supernumerary_cap_default,
+        "nri_outlier_threshold": nri_outlier_threshold,
+        "yoy_surge_threshold": yoy_surge_threshold,
+    }
+    bounds = {
+        "intake_warn_threshold": (0.0, 1.0),
+        "intake_block_threshold": (0.0, 1.0),
+        "supernumerary_cap_default": (0.0, 1.0),
+        "nri_outlier_threshold": (0.0, 1.0),
+        "yoy_surge_threshold": (1.0, 10.0),
+    }
+    values: dict[str, str] = {}
+    for key, raw_value in raw_values.items():
+        try:
+            value = float(raw_value)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{key} must be numeric",
+            ) from exc
+        lower, upper = bounds[key]
+        if not lower <= value <= upper:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{key} must be between {lower} and {upper}",
+            )
+        values[key] = f"{value:.4f}".rstrip("0").rstrip(".")
+
+    if float(values["intake_warn_threshold"]) >= float(values["intake_block_threshold"]):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Intake warning threshold must be lower than the block threshold",
+        )
+
+    old_values = _settings(session)
+    for key, value in values.items():
+        setting = session.exec(select(Setting).where(Setting.key == key)).first()
+        if setting is None:
+            session.add(Setting(key=key, value=value))
+        else:
+            setting.value = value
+    session.commit()
+
+    changes = {
+        key: {"from": old_values.get(key), "to": value}
+        for key, value in values.items()
+        if old_values.get(key) != value
+    }
+    if changes:
+        log_action(
+            session=session,
+            user=user,
+            action="SETTINGS_UPDATE",
+            entity="SETTING",
+            details=changes,
+        )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="aicte_settings.html",
+        context={"settings": values, "saved": True},
+    )
+
+
+@router.post("/reset-demo")
+def reset_demo(
+    user: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    from seed import seed_database
+
+    seed_database()
+    log_action(
+        session=session,
+        user=user,
+        action="RESET_DEMO",
+        entity="SYSTEM",
+        details="Demo database reset and deterministically reseeded.",
+    )
+    return RedirectResponse(url="/aicte/dashboard", status_code=303)
 
 
 @api_router.get("/summary")
