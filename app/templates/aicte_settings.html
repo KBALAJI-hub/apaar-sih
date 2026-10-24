@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}AICTE Settings · APAAR Verify{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-indigo-900">Validation Settings</h1>
+      <p class="text-sm text-slate-600">Configure system-wide thresholds used by validation and anomaly checks.</p>
+    </div>
+    <a href="/aicte/dashboard" class="text-indigo-700 underline">Dashboard</a>
+  </div>
+
+  {% if saved %}
+    <div class="mb-4 rounded border border-green-300 bg-green-50 px-4 py-3 text-green-800">
+      Settings saved and the change recorded in the audit log.
+    </div>
+  {% endif %}
+
+  <form method="post" action="/aicte/settings" class="space-y-5 rounded-xl bg-white p-6 shadow">
+    <label class="block">
+      <span class="mb-1 block font-medium">Intake warning threshold (ratio, 0–1)</span>
+      <input name="intake_warn_threshold" type="number" min="0" max="1" step="0.01" required
+             value="{{ settings.intake_warn_threshold }}" class="w-full rounded border px-3 py-2">
+      <span class="text-sm text-slate-500">Example: 0.90 warns at 90% of approved intake.</span>
+    </label>
+    <label class="block">
+      <span class="mb-1 block font-medium">Intake block threshold (ratio, 0–1)</span>
+      <input name="intake_block_threshold" type="number" min="0" max="1" step="0.01" required
+             value="{{ settings.intake_block_threshold }}" class="w-full rounded border px-3 py-2">
+    </label>
+    <label class="block">
+      <span class="mb-1 block font-medium">Default supernumerary cap (ratio, 0–1)</span>
+      <input name="supernumerary_cap_default" type="number" min="0" max="1" step="0.01" required
+             value="{{ settings.supernumerary_cap_default }}" class="w-full rounded border px-3 py-2">
+    </label>
+    <label class="block">
+      <span class="mb-1 block font-medium">NRI / OCI / foreign-national share threshold (ratio, 0–1)</span>
+      <input name="nri_outlier_threshold" type="number" min="0" max="1" step="0.01" required
+             value="{{ settings.nri_outlier_threshold }}" class="w-full rounded border px-3 py-2">
+    </label>
+    <label class="block">
+      <span class="mb-1 block font-medium">Year-over-year surge threshold (growth multiplier, 1–10)</span>
+      <input name="yoy_surge_threshold" type="number" min="1" max="10" step="0.1" required
+             value="{{ settings.yoy_surge_threshold }}" class="w-full rounded border px-3 py-2">
+    </label>
+    <button type="submit" class="rounded bg-indigo-700 px-5 py-2 font-semibold text-white hover:bg-indigo-800">
+      Save settings
+    </button>
+  </form>
+
+  <form method="post" action="/aicte/reset-demo" class="mt-8 rounded-xl border border-red-200 bg-red-50 p-5"
+        onsubmit="return confirm('Reset all demo data? This replaces the current database with the deterministic demo seed.');">
+    <h2 class="font-semibold text-red-900">Reset demo data</h2>
+    <p class="my-2 text-sm text-red-800">This replaces current demo records with a fresh seeded dataset.</p>
+    <button type="submit" class="rounded bg-red-700 px-4 py-2 font-semibold text-white hover:bg-red-800">
+      Reset demo
+    </button>
+  </form>
+</div>
+{% endblock %}

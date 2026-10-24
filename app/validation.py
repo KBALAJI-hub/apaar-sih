@@ -4,6 +4,7 @@ Implements AICTE compliance rules R1 to R12, batch context preloading, and Intak
 """
 
 from datetime import datetime
+from collections import Counter
 from typing import Any, Dict, List, Optional, Set, Tuple
 from sqlmodel import Session, select
 
@@ -96,16 +97,17 @@ def rule_r4_duplicate_within_institution(
 def rule_r5_cross_institution_duplicate(
     apaar_id: str,
     institution_id: int,
-    all_active_fulltime_apaars: Dict[str, int],
+    all_active_fulltime_apaars: Dict[str, Set[int]],
 ) -> Optional[Dict[str, str]]:
     """R5: Same APAAR actively enrolled full-time at another institution (HIGH)."""
     apaar_str = str(apaar_id)
-    other_inst_id = all_active_fulltime_apaars.get(apaar_str)
-    if other_inst_id is not None and other_inst_id != institution_id:
+    other_institutions = all_active_fulltime_apaars.get(apaar_str, set()) - {institution_id}
+    if other_institutions:
+        institution_list = ", ".join(str(inst_id) for inst_id in sorted(other_institutions))
         return {
             "rule_code": "R5",
             "severity": "HIGH",
-            "message": f"APAAR ID '{apaar_str}' is concurrently enrolled full-time at another institution (ID: {other_inst_id}).",
+            "message": f"APAAR ID '{apaar_str}' is concurrently enrolled full-time at another institution (ID: {institution_list}).",
             "recommended_action": "Flag for AICTE cross-verification and obtain migration/clearance certificate.",
         }
     return None
@@ -113,8 +115,13 @@ def rule_r5_cross_institution_duplicate(
 
 def rule_r8_inconsistency(row: Dict[str, Any]) -> Optional[Dict[str, str]]:
     """R8: Data inconsistencies: NRI/FN confusion, FN with Indian nationality, future admission (MEDIUM)."""
-    is_nri = bool(row.get("is_nri"))
-    is_fn = bool(row.get("is_foreign_national"))
+    def as_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
+
+    is_nri = as_bool(row.get("is_nri"))
+    is_fn = as_bool(row.get("is_foreign_national"))
     nationality = str(row.get("nationality") or "").strip().lower()
     admission_year = row.get("admission_year")
 
@@ -194,16 +201,34 @@ def rule_r10_consent(consent_given: Any) -> Optional[Dict[str, str]]:
 
 
 def rule_r11_program_existence(
-    program_ref: Any, program_map: Dict[str, Any]
+    program_ref: Any, program_map: Dict[str, Any], admission_year: Any = None
 ) -> Optional[Dict[str, str]]:
     """R11: Program not found for this institution and year (HIGH - Reject row)."""
     prog_key = str(program_ref).strip().lower()
-    if prog_key not in program_map:
+    program = program_map.get(prog_key)
+    if program is None:
         return {
             "rule_code": "R11",
             "severity": "HIGH",
             "message": f"Program '{program_ref}' is not registered under this institution's AICTE approved quota.",
             "recommended_action": "Check AICTE approved program titles and academic year.",
+        }
+    try:
+        submitted_year = int(admission_year)
+        program_start_year = int(str(program.academic_year).split("-", 1)[0])
+    except (AttributeError, TypeError, ValueError):
+        return {
+            "rule_code": "R11",
+            "severity": "HIGH",
+            "message": f"Program '{program_ref}' could not be matched to a valid admission year.",
+            "recommended_action": "Check the approved program academic year and submitted admission year.",
+        }
+    if submitted_year != program_start_year:
+        return {
+            "rule_code": "R11",
+            "severity": "HIGH",
+            "message": f"Program '{program_ref}' is not approved for admission year {submitted_year}.",
+            "recommended_action": "Select the program version approved for the student's admission year.",
         }
     return None
 
@@ -254,7 +279,9 @@ def build_validation_context(institution_id: int, session: Session) -> Dict[str,
         select(Student.apaar_id, Student.institution_id)
         .where(Student.mode == "FULL_TIME", Student.status == "ACTIVE")
     ).all()
-    all_active_fulltime_apaars = {s[0]: s[1] for s in all_ft_students}
+    all_active_fulltime_apaars: Dict[str, Set[int]] = {}
+    for apaar_id, active_institution_id in all_ft_students:
+        all_active_fulltime_apaars.setdefault(apaar_id, set()).add(active_institution_id)
 
     return {
         "institution_id": institution_id,
@@ -316,7 +343,9 @@ def validate_student_row(row: Dict[str, Any], ctx: Dict[str, Any]) -> List[Dict[
 
     # R11: Program registered check
     if program_ref:
-        f11 = rule_r11_program_existence(program_ref, ctx["program_map"])
+        f11 = rule_r11_program_existence(
+            program_ref, ctx["program_map"], row.get("admission_year")
+        )
         if f11:
             flags.append(f11)
 
@@ -345,6 +374,84 @@ def validate_student_row(row: Dict[str, Any], ctx: Dict[str, Any]) -> List[Dict[
         ctx["batch_seen_rolls"].add(student_id)
 
     return flags
+
+
+def run_full_validation(institution_id: int, session: Session) -> List[ValidationFlag]:
+    """Rebuild open row and program validation flags for one institution."""
+    students = session.exec(
+        select(Student).where(Student.institution_id == institution_id)
+    ).all()
+    programs = session.exec(
+        select(Program).where(Program.institution_id == institution_id)
+    ).all()
+    program_by_id = {program.id: program for program in programs}
+    apaar_counts = Counter(student.apaar_id for student in students)
+    roll_counts = Counter(student.student_id for student in students if student.student_id)
+
+    old_flags = session.exec(
+        select(ValidationFlag).where(
+            ValidationFlag.institution_id == institution_id,
+            ValidationFlag.status == "OPEN",
+        )
+    ).all()
+    for flag in old_flags:
+        flag.status = "RESOLVED"
+    session.flush()
+
+    ctx = build_validation_context(institution_id, session)
+    created_flags: List[ValidationFlag] = []
+    for student in students:
+        row = {
+            "apaar_id": student.apaar_id,
+            "student_id": student.student_id,
+            "full_name": student.full_name,
+            "dob": student.dob,
+            "program_name": (
+                program_by_id[student.program_id].name
+                if student.program_id in program_by_id
+                else ""
+            ),
+            "admission_year": student.admission_year,
+            "gender": student.gender,
+            "admission_type": student.admission_type,
+            "is_nri": student.is_nri,
+            "oci_status": student.oci_status,
+            "is_foreign_national": student.is_foreign_national,
+            "nationality": student.nationality,
+            "consent_given": student.consent_level > 0,
+        }
+        row_ctx = dict(ctx)
+        row_ctx["inst_apaar_set"] = (
+            {student.apaar_id} if apaar_counts[student.apaar_id] > 1 else set()
+        )
+        row_ctx["inst_roll_set"] = (
+            {student.student_id}
+            if student.student_id and roll_counts[student.student_id] > 1
+            else set()
+        )
+        row_ctx["batch_seen_apaars"] = set()
+        row_ctx["batch_seen_rolls"] = set()
+
+        for flag in validate_student_row(row, row_ctx):
+            record = ValidationFlag(
+                institution_id=institution_id,
+                program_id=student.program_id,
+                student_id=student.id,
+                rule_code=flag["rule_code"],
+                severity=flag["severity"],
+                message=flag["message"],
+                recommended_action=flag["recommended_action"],
+                status="OPEN",
+                created_at=utc_now(),
+            )
+            session.add(record)
+            created_flags.append(record)
+
+    session.flush()
+    for program in programs:
+        created_flags.extend(validate_program_intake(program.id, session))
+    session.commit()
+    return created_flags
 
 
 def intake_check(program_id: int, session: Session) -> Dict[str, Any]:
@@ -385,9 +492,32 @@ def intake_check(program_id: int, session: Session) -> Dict[str, Any]:
     remaining = max(0, approved - regular_count)
     fill_ratio = regular_count / approved if approved > 0 else 1.0
 
+    settings = {
+        setting.key: setting.value
+        for setting in session.exec(
+            select(Setting).where(
+                Setting.key.in_([
+                    "intake_warn_threshold",
+                    "intake_block_threshold",
+                    "supernumerary_cap_default",
+                ])
+            )
+        ).all()
+    }
+    try:
+        warning_threshold = float(settings.get("intake_warn_threshold", "0.90"))
+        block_threshold = float(settings.get("intake_block_threshold", "1.00"))
+        supernumerary_cap = float(
+            settings.get("supernumerary_cap_default", str(program.supernumerary_cap))
+        )
+    except ValueError as exc:
+        raise ValueError("Intake policy settings must contain numeric values") from exc
+
     if regular_count >= approved:
         decision = "BLOCK"
-    elif fill_ratio >= 0.90:
+    elif fill_ratio >= block_threshold:
+        decision = "BLOCK"
+    elif fill_ratio >= warning_threshold:
         decision = "WARN"
     else:
         decision = "ALLOW"
@@ -399,7 +529,7 @@ def intake_check(program_id: int, session: Session) -> Dict[str, Any]:
         "approved_intake": approved,
         "enrolled_regular": regular_count,
         "enrolled_supernumerary": super_count,
-        "supernumerary_cap": int(approved * program.supernumerary_cap),
+        "supernumerary_cap": int(approved * supernumerary_cap),
         "remaining_seats": remaining,
         "fill_ratio": round(fill_ratio, 3),
         "decision": decision,
@@ -416,6 +546,16 @@ def validate_program_intake(program_id: int, session: Session) -> List[Validatio
     program = session.get(Program, program_id)
     if not program:
         return []
+
+    existing_flags = session.exec(
+        select(ValidationFlag).where(
+            ValidationFlag.program_id == program_id,
+            ValidationFlag.rule_code.in_(["R6", "R7"]),
+            ValidationFlag.status == "OPEN",
+        )
+    ).all()
+    for existing_flag in existing_flags:
+        existing_flag.status = "RESOLVED"
 
     flags = []
     intake_data = intake_check(program_id, session)
