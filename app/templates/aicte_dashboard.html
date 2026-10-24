@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% block title %}AICTE Dashboard · APAAR Verify{% endblock %}
+
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="text-2xl font-bold text-indigo-900">AICTE Dashboard</h1>
+    <p class="text-xs text-slate-500">
+      <span class="inline-block w-2 h-2 rounded-full bg-green-500 align-middle"></span>
+      Live · refreshes every 10 s · last updated <span id="last-updated">never</span>
+    </p>
+  </div>
+  <a href="/aicte/reports" class="bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-semibold px-4 py-2 rounded">Reports</a>
+</div>
+
+<div id="load-error" class="hidden mb-4 px-4 py-2 rounded border bg-red-50 border-red-300 text-red-800 text-sm"></div>
+
+<!-- ===== Filters ===== -->
+<div class="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-3 items-end">
+  <div>
+    <label for="f-state" class="block text-xs text-slate-500 mb-1">State</label>
+    <select id="f-state" class="border rounded px-3 py-2 text-sm"><option value="">All states</option></select>
+  </div>
+  <div>
+    <label for="f-type" class="block text-xs text-slate-500 mb-1">Institution type</label>
+    <select id="f-type" class="border rounded px-3 py-2 text-sm"><option value="">All types</option></select>
+  </div>
+  <div>
+    <label for="f-year" class="block text-xs text-slate-500 mb-1">Academic year</label>
+    <select id="f-year" class="border rounded px-3 py-2 text-sm"><option value="">All years</option></select>
+  </div>
+  <button type="button" id="f-clear" class="text-sm text-slate-500 underline py-2">Clear</button>
+</div>
+
+<!-- ===== 5 KPI cards ===== -->
+<div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+  <div class="bg-white rounded-xl shadow p-4">
+    <div class="text-xs uppercase text-slate-500">Institutions</div>
+    <div id="k-institutions" class="text-3xl font-bold mt-1">-</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4">
+    <div class="text-xs uppercase text-slate-500">Total Enrolment</div>
+    <div id="k-enrolment" class="text-3xl font-bold mt-1">-</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4">
+    <div class="text-xs uppercase text-slate-500">Total Intake</div>
+    <div id="k-intake" class="text-3xl font-bold mt-1">-</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4">
+    <div class="text-xs uppercase text-slate-500">Flagged Institutions</div>
+    <div id="k-flagged" class="text-3xl font-bold mt-1 text-amber-600">-</div>
+  </div>
+  <a href="/aicte/duplicates" class="bg-white rounded-xl shadow p-4 hover:ring-2 hover:ring-red-300">
+    <div class="text-xs uppercase text-slate-500">Cross-institution Duplicates</div>
+    <div id="k-dups" class="text-3xl font-bold mt-1 text-red-600">-</div>
+  </a>
+</div>
+
+<!-- ===== Charts ===== -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+  <div class="bg-white rounded-xl shadow p-4">
+    <h2 class="font-semibold mb-1">Fill ratio per institution</h2>
+    <p class="text-xs text-slate-500 mb-2">Red: above 100% (intake exceeded) · amber: 90-100% · green: below 90%</p>
+    <div class="relative h-64"><canvas id="fillChart"></canvas></div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4">
+    <h2 class="font-semibold mb-1">Open flags by rule</h2>
+    <p class="text-xs text-slate-500 mb-2">Count of open validation flags per rule code</p>
+    <div class="relative h-64"><canvas id="flagChart"></canvas></div>
+  </div>
+</div>
+
+<!-- ===== Ranking + alerts ===== -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+  <div class="bg-white rounded-xl shadow p-4 lg:col-span-2 overflow-x-auto">
+    <h2 class="font-semibold mb-3">Institutions by risk (lowest compliance first)</h2>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-slate-500 border-b">
+          <th class="py-2 pr-3">#</th>
+          <th class="py-2 pr-3">Institution</th>
+          <th class="py-2 pr-3">State</th>
+          <th class="py-2 pr-3">Fill</th>
+          <th class="py-2 pr-3">Open flags</th>
+          <th class="py-2 pr-3">Score</th>
+          <th class="py-2"></th>
+        </tr>
+      </thead>
+      <tbody id="rank-body">
+        <tr><td colspan="7" class="py-6 text-center text-slate-400">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="bg-white rounded-xl shadow p-4">
+    <h2 class="font-semibold mb-3">Alerts</h2>
+    <h3 class="text-xs uppercase text-slate-500 mb-1">Latest HIGH flags</h3>
+    <ul id="high-flags" class="space-y-2 text-sm mb-4"></ul>
+    <h3 class="text-xs uppercase text-slate-500 mb-1">Anomaly alerts</h3>
+    <ul id="anomalies" class="space-y-2 text-sm"></ul>
+    <a href="/aicte/anomalies" class="inline-block mt-3 text-xs text-indigo-700 underline">All anomaly alerts &rarr;</a>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const SUMMARY_URL = '/api/aicte/summary';
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const pick = (o, ...keys) => { for (const k of keys) if (o && o[k] !== undefined && o[k] !== null) return o[k]; return undefined; };
+
+  const RED = '#dc2626', AMBER = '#d97706', GREEN = '#16a34a', INDIGO = '#4f46e5';
+
+  // ---- Charts (created once, then updated in place) ----
+  const fillChart = new Chart($('fillChart'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'Fill %', data: [], backgroundColor: [] }] },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, title: { display: true, text: 'Fill %' } } }
+    }
+  });
+  const flagChart = new Chart($('flagChart'), {
+    type: 'bar',
+    data: { labels: [], datasets: [{ label: 'Open flags', data: [], backgroundColor: INDIGO }] },
+    options: {
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+    }
+  });
+
+  // ---- Helpers to read P2's JSON, tolerant to small key differences ----
+  function fillPct(i) {
+    const intake = Number(pick(i, 'approved_intake', 'intake', 'total_intake') || 0);
+    const enrol = Number(pick(i, 'enrolment', 'enrollment', 'total_enrolment', 'actual_enrolment') || 0);
+    if (intake > 0 && enrol >= 0 && pick(i, 'enrolment', 'enrollment', 'total_enrolment', 'actual_enrolment') !== undefined)
+      return enrol / intake * 100;
+    let r = Number(pick(i, 'fill_ratio', 'fill_percent') || 0);
+    return r <= 3 ? r * 100 : r;       // accept 0-1 ratio or percent
+  }
+  const scoreClass = s => s >= 80 ? 'text-green-600' : (s >= 60 ? 'text-amber-600' : 'text-red-600');
+  const fillColor = p => p > 100 ? RED : (p >= 90 ? AMBER : GREEN);
+
+  function fillSelect(sel, values, allLabel) {
+    const cur = sel.value;
+    const uniq = Array.from(new Set(values.filter(Boolean))).sort();
+    sel.innerHTML = '<option value="">' + allLabel + '</option>' +
+      uniq.map(v => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(v) + '</option>').join('');
+  }
+
+  // Dropdown options are remembered, so filtering never empties the lists
+  const seen = { state: new Set(), type: new Set(), year: new Set() };
+
+  function render(d) {
+    const t = d.totals || d;
+    $('k-institutions').textContent = pick(t, 'institutions', 'total_institutions') ?? '-';
+    $('k-enrolment').textContent = pick(t, 'total_enrolment', 'enrolment', 'total_enrollment') ?? '-';
+    $('k-intake').textContent = pick(t, 'total_intake', 'intake') ?? '-';
+    $('k-flagged').textContent = pick(t, 'flagged_institutions', 'flagged') ?? '-';
+    $('k-dups').textContent = pick(t, 'cross_institution_duplicates', 'cross_duplicates', 'duplicates', 'cross_institution_duplicate_count') ?? '-';
+
+    const insts = d.institutions || d.per_institution || [];
+
+    // filter dropdowns
+    insts.forEach(i => {
+      const s = pick(i, 'state'), ty = pick(i, 'type', 'institution_type');
+      if (s) seen.state.add(s);
+      if (ty) seen.type.add(ty);
+    });
+    (d.academic_years || []).forEach(y => seen.year.add(String(y)));
+    fillSelect($('f-state'), Array.from(seen.state), 'All states');
+    fillSelect($('f-type'), Array.from(seen.type), 'All types');
+    fillSelect($('f-year'), Array.from(seen.year), 'All years');
+
+    // fill ratio chart
+    const pcts = insts.map(fillPct);
+    fillChart.data.labels = insts.map(i => pick(i, 'name', 'institution_name', 'aicte_id'));
+    fillChart.data.datasets[0].data = pcts.map(p => Math.round(p * 10) / 10);
+    fillChart.data.datasets[0].backgroundColor = pcts.map(fillColor);
+    fillChart.update('none');
+
+    // flags by rule chart (object {R1: 3} or list [{rule_code, count}])
+    let fr = d.flags_by_rule || d.flags_by_rule_code || {};
+    let entries = Array.isArray(fr) ? fr.map(x => [x.rule_code || x.code, x.count]) : Object.entries(fr);
+    entries.sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }));
+    flagChart.data.labels = entries.map(e => e[0]);
+    flagChart.data.datasets[0].data = entries.map(e => e[1]);
+    flagChart.update('none');
+
+    // ranking table: lowest compliance first
+    const ranked = insts.slice().sort((a, b) =>
+      Number(pick(a, 'compliance_score') ?? 100) - Number(pick(b, 'compliance_score') ?? 100));
+    $('rank-body').innerHTML = ranked.length ? ranked.map((i, n) => {
+      const p = fillPct(i), sc = Number(pick(i, 'compliance_score') ?? 0);
+      const id = pick(i, 'id', 'institution_id');
+      return '<tr class="border-b">' +
+        '<td class="py-2 pr-3 text-slate-400">' + (n + 1) + '</td>' +
+        '<td class="py-2 pr-3 font-medium">' + esc(pick(i, 'name', 'institution_name')) + '</td>' +
+        '<td class="py-2 pr-3">' + esc(pick(i, 'state')) + '</td>' +
+        '<td class="py-2 pr-3 font-semibold" style="color:' + fillColor(p) + '">' + p.toFixed(0) + '%</td>' +
+        '<td class="py-2 pr-3">' + esc(pick(i, 'open_flags', 'open_flags_count') ?? 0) + '</td>' +
+        '<td class="py-2 pr-3 font-bold ' + scoreClass(sc) + '">' + sc + '</td>' +
+        '<td class="py-2 text-right"><a class="text-indigo-700 underline" href="/aicte/institutions/' + esc(id) + '">Drill down</a></td>' +
+        '</tr>';
+    }).join('') : '<tr><td colspan="7" class="py-6 text-center text-slate-400">No institutions match the filters.</td></tr>';
+
+    // alerts panel
+    const high = d.latest_high_flags || d.high_flags || d.latest_high_alerts || [];
+    $('high-flags').innerHTML = high.length ? high.slice(0, 10).map(f =>
+      '<li class="border-l-4 border-red-500 pl-2">' +
+        '<span class="badge badge-HIGH">' + esc(pick(f, 'rule_code', 'code')) + '</span> ' +
+        '<span class="text-slate-500 text-xs">' + esc(pick(f, 'institution_name', 'institution')) + '</span>' +
+        '<div>' + esc(pick(f, 'message', 'reason')) + '</div></li>'
+    ).join('') : '<li class="text-slate-400">No HIGH flags.</li>';
+
+    const an = d.anomaly_alerts || d.anomalies || [];
+    $('anomalies').innerHTML = an.length ? an.slice(0, 10).map(a =>
+      '<li class="border-l-4 border-amber-500 pl-2">' +
+        '<span class="badge badge-MEDIUM">' + esc(pick(a, 'code')) + '</span> ' +
+        '<span class="text-slate-500 text-xs">' + esc(pick(a, 'institution_name', 'institution')) + '</span>' +
+        '<div>' + esc(pick(a, 'reason', 'message')) + '</div>' +
+        (pick(a, 'recommended_action') ? '<div class="text-xs text-slate-500">Action: ' + esc(a.recommended_action) + '</div>' : '') +
+        '</li>'
+    ).join('') : '<li class="text-slate-400">No anomaly alerts.</li>';
+  }
+
+  async function load() {
+    const q = new URLSearchParams();
+    if ($('f-state').value) q.set('state', $('f-state').value);
+    if ($('f-type').value) q.set('institution_type', $('f-type').value);
+    if ($('f-year').value) q.set('academic_year', $('f-year').value);
+    const err = $('load-error');
+    try {
+      const res = await fetch(SUMMARY_URL + (q.toString() ? '?' + q : ''), { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      render(await res.json());
+      err.classList.add('hidden');
+      $('last-updated').textContent = new Date().toLocaleTimeString();
+    } catch (e) {
+      console.error('Summary load failed', e);
+      err.textContent = 'Could not load live data (' + e.message + '). Will retry.';
+      err.classList.remove('hidden');
+    }
+  }
+
+  ['f-state', 'f-type', 'f-year'].forEach(id => $(id).addEventListener('change', load));
+  $('f-clear').addEventListener('click', () => {
+    ['f-state', 'f-type', 'f-year'].forEach(id => { $(id).value = ''; });
+    load();
+  });
+
+  load();
+  setInterval(load, 10000);   // auto-refresh, charts update in place
+</script>
+{% endblock %}

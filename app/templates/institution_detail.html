@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}{{ institution.name }} · AICTE drill-down{% endblock %}
+
+{% block content %}
+{% set fill_pct = ((total_students / approved_intake * 100)|round(1)) if approved_intake else 0 %}
+
+<div class="flex flex-wrap items-center justify-between gap-3 mb-6">
+  <div>
+    <a href="/aicte/dashboard" class="text-xs text-indigo-700 underline">&larr; Back to dashboard</a>
+    <h1 class="text-2xl font-bold text-indigo-900">{{ institution.name }}</h1>
+    <p class="text-sm text-slate-500">
+      AICTE ID: <span class="font-mono">{{ institution.aicte_id }}</span> &bull;
+      State: {{ institution.state }} &bull; Type: {{ institution.type }}
+    </p>
+  </div>
+</div>
+
+<!-- KPIs -->
+<div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+  <div class="bg-white rounded-xl shadow p-4">
+    <div class="text-xs uppercase text-slate-500">Enrolled</div>
+    <div class="text-3xl font-bold mt-1">{{ total_students }}</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4">
+    <div class="text-xs uppercase text-slate-500">Approved Intake</div>
+    <div class="text-3xl font-bold mt-1">{{ approved_intake }}</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4">
+    <div class="text-xs uppercase text-slate-500">Fill %</div>
+    <div class="text-3xl font-bold mt-1 {% if fill_pct > 100 %}text-red-600{% elif fill_pct >= 90 %}text-amber-600{% else %}text-green-600{% endif %}">{{ fill_pct }}%</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4">
+    <div class="text-xs uppercase text-slate-500">Open Flags</div>
+    <div class="text-3xl font-bold mt-1 {% if open_flags_count > 0 %}text-red-600{% else %}text-green-600{% endif %}">{{ open_flags_count }}</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-4">
+    <div class="text-xs uppercase text-slate-500">Compliance</div>
+    <div class="text-3xl font-bold mt-1 {% if compliance_score >= 80 %}text-green-600{% elif compliance_score >= 60 %}text-amber-600{% else %}text-red-600{% endif %}">{{ compliance_score }}<span class="text-base text-slate-400">/100</span></div>
+  </div>
+</div>
+
+<!-- Programs -->
+<div class="bg-white rounded-xl shadow mb-6 overflow-hidden">
+  <div class="px-4 py-3 border-b font-semibold">Programs and intake</div>
+  <div class="divide-y">
+    {% for prog in programs_data or [] %}
+    {% set bar_w = [prog.fill_ratio * 100, 100]|min %}
+    <div class="px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <div>
+        <div class="text-sm font-semibold">{{ prog.name }}</div>
+        <div class="text-xs text-slate-500">Year: {{ prog.academic_year }} &bull; Level: {{ prog.level }}</div>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="w-48">
+          <div class="flex justify-between text-xs mb-1">
+            <span class="text-slate-500">{{ prog.enrolled_regular }} / {{ prog.approved_intake }}</span>
+            <span class="font-semibold">{{ (prog.fill_ratio * 100)|round(1) }}%</span>
+          </div>
+          <div class="w-full bg-slate-200 rounded-full h-2">
+            <div class="h-2 rounded-full {% if prog.fill_ratio > 1.0 %}bg-red-500{% elif prog.fill_ratio >= 0.9 %}bg-amber-500{% else %}bg-green-500{% endif %}"
+                 data-w="{{ bar_w|round(1) }}"></div>
+          </div>
+        </div>
+        <span class="text-xs font-semibold px-2 py-1 rounded-full
+          {% if prog.decision == 'BLOCK' %}bg-red-100 text-red-800{% elif prog.decision == 'WARN' %}bg-amber-100 text-amber-800{% else %}bg-green-100 text-green-800{% endif %}">{{ prog.decision }}</span>
+      </div>
+    </div>
+    {% else %}
+    <div class="px-4 py-6 text-center text-slate-400 text-sm">No programs.</div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  <!-- Open flags -->
+  <div class="bg-white rounded-xl shadow p-4 overflow-x-auto">
+    <h2 class="font-semibold mb-3">Open validation flags</h2>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-slate-500 border-b">
+          <th class="py-2 pr-3">Severity</th><th class="py-2 pr-3">Rule</th><th class="py-2">Message</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in flags or [] %}
+        <tr class="border-b">
+          <td class="py-2 pr-3"><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+          <td class="py-2 pr-3 font-mono">{{ f.rule_code }}</td>
+          <td class="py-2">{{ f.message }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="py-6 text-center text-slate-400">No open flags.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Anomaly alerts -->
+  <div class="bg-white rounded-xl shadow p-4">
+    <h2 class="font-semibold mb-3">Anomaly alerts</h2>
+    <ul class="space-y-3 text-sm">
+      {% for a in alerts or [] %}
+      <li class="border-l-4 border-amber-500 pl-3">
+        <div><span class="badge badge-MEDIUM">{{ a.code }}</span>
+          <span class="text-xs text-slate-400 ml-1">score {{ a.score if a.score is not none else '-' }}</span></div>
+        <div>{{ a.reason }}</div>
+        {% if a.recommended_action %}<div class="text-xs text-slate-500">Action: {{ a.recommended_action }}</div>{% endif %}
+      </li>
+      {% else %}
+      <li class="text-slate-400">No anomaly alerts.</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Progress bar widths (keeps Jinja out of the style attribute)
+  document.querySelectorAll('[data-w]').forEach(function (el) {
+    el.style.width = el.dataset.w + '%';
+  });
+</script>
+{% endblock %}
