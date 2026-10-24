@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Access denied · APAAR Verify{% endblock %}
+
+{% block content %}
+<div class="max-w-lg mx-auto bg-white rounded-xl shadow p-10 text-center mt-8">
+  <div class="text-6xl font-bold text-red-600 mb-2">403</div>
+  <h1 class="text-xl font-semibold mb-2">Access denied</h1>
+  <p class="text-slate-600 mb-6">
+    Your role does not have permission to view this page.
+    This attempt may be recorded in the audit log.
+  </p>
+  <a href="/" class="inline-block bg-indigo-700 hover:bg-indigo-800 text-white px-5 py-2 rounded font-semibold">Go to home</a>
+</div>
+{% endblock %}
