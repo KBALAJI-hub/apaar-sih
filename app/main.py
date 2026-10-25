@@ -74,3 +74,16 @@ def health_check():
     db_status = check_db_connection()
     return {"status": "ok", "database": db_status}
 
+
+@app.get("/institutions", response_class=RedirectResponse)
+def institutions_redirect():
+    """Redirect /institutions to /aicte/institutions."""
+    return RedirectResponse(url="/aicte/institutions", status_code=303)
+
+
+@app.get("/report", response_class=RedirectResponse)
+@app.get("/reports", response_class=RedirectResponse)
+def reports_redirect():
+    """Redirect /report and /reports to /aicte/reports."""
+    return RedirectResponse(url="/aicte/reports", status_code=303)
+

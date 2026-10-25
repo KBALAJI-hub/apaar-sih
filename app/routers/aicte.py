@@ -264,6 +264,7 @@ def compliance_summary(
             ).all()
         )
         rows.append({
+            "id": institution.id,
             "name": institution.name,
             "aicte_id": institution.aicte_id,
             "state": institution.state,
@@ -277,7 +278,107 @@ def compliance_summary(
     return templates.TemplateResponse(
         request=request,
         name="compliance_summary.html",
-        context={"rows": rows},
+        context={"rows": rows, "role": user.role, "user": user},
+    )
+
+
+@router.get("/reports", response_class=HTMLResponse)
+def aicte_reports_view(
+    request: Request,
+    user: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    """Render the AICTE compliance and reports overview."""
+    return compliance_summary(request=request, user=user, session=session)
+
+
+@router.get("/institutions", response_class=HTMLResponse)
+def aicte_institutions_view(
+    request: Request,
+    user: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    """Render AICTE institutions directory with compliance metrics and drill-down links."""
+    return compliance_summary(request=request, user=user, session=session)
+
+
+@router.get("/institutions/{institution_id}", response_class=HTMLResponse)
+def aicte_institution_drilldown(
+    institution_id: int,
+    request: Request,
+    user: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    """Render institution drill-down dashboard with program breakdowns, flags, and anomalies."""
+    institution = session.get(Institution, institution_id)
+    if not institution:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Institution not found")
+
+    programs = session.exec(
+        select(Program).where(Program.institution_id == institution.id)
+    ).all()
+    students = session.exec(
+        select(Student).where(
+            Student.institution_id == institution.id,
+            Student.status == "ACTIVE",
+        )
+    ).all()
+    total_students = len(students)
+    approved_intake = sum(max(0, int(p.approved_intake or 0)) for p in programs)
+
+    flags = session.exec(
+        select(ValidationFlag).where(
+            ValidationFlag.institution_id == institution.id,
+            ValidationFlag.status == "OPEN",
+        ).order_by(ValidationFlag.created_at.desc())
+    ).all()
+    open_flags_count = len(flags)
+
+    alerts = session.exec(
+        select(AnomalyAlert).where(
+            AnomalyAlert.institution_id == institution.id,
+        ).order_by(AnomalyAlert.created_at.desc())
+    ).all()
+
+    c_score = compliance_score(institution.id, session)
+
+    programs_data = []
+    for prog in programs:
+        prog_students = [s for s in students if s.program_id == prog.id]
+        enrolled_regular = len(prog_students)
+        intake = prog.approved_intake or 0
+        fill_ratio = round(enrolled_regular / intake, 3) if intake else 0.0
+        decision = "ALLOW"
+        if fill_ratio > 1.0:
+            decision = "BLOCK"
+        elif fill_ratio >= 0.9:
+            decision = "WARN"
+
+        programs_data.append({
+            "name": prog.name,
+            "academic_year": prog.academic_year or "Current",
+            "level": prog.level or "UG",
+            "enrolled_regular": enrolled_regular,
+            "approved_intake": intake,
+            "fill_ratio": fill_ratio,
+            "decision": decision,
+        })
+
+    return templates.TemplateResponse(
+        request=request,
+        name="institution_detail.html",
+        context={
+            "role": user.role,
+            "user": user,
+            "institution": institution,
+            "total_students": total_students,
+            "approved_intake": approved_intake,
+            "open_flags_count": open_flags_count,
+            "compliance_score": c_score,
+            "programs_data": programs_data,
+            "flags": flags,
+            "alerts": alerts,
+        },
     )
 
 
