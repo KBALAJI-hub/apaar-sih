@@ -542,7 +542,18 @@ async def process_csv_upload(
             rejected_rows.append({**row_dict, "rejection_reason": reasons})
         else:
             prog_name_key = str(row_dict.get("program_name") or row_dict.get("program_id") or "").strip().lower()
-            program = ctx["program_map"].get(prog_name_key)
+            try:
+                adm_yr = int(row_dict.get("admission_year") or 2024)
+            except (ValueError, TypeError):
+                adm_yr = 2024
+            program = (
+                ctx["program_map"].get((prog_name_key, adm_yr))
+                or ctx["program_map"].get(prog_name_key)
+                or ctx["program_map"].get((prog_name_key.replace(" engineering", ""), adm_yr))
+                or ctx["program_map"].get(prog_name_key.replace(" engineering", ""))
+                or ctx["program_map"].get((f"{prog_name_key} engineering", adm_yr))
+                or ctx["program_map"].get(f"{prog_name_key} engineering")
+            )
             prog_id = program.id if program else None
 
             stu = Student(

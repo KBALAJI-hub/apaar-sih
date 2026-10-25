@@ -391,13 +391,12 @@ def verify_public_record(
 
         signature_to_check = sig or student.record_signature
         if not signature_to_check:
-            signature_to_check = sign_record(student, session)
-            session.add(student)
-            session.commit()
-
-        is_authentic = verify_signature(student, signature_to_check, session=session)
-        if not is_authentic:
-            failure_message = "The Ed25519 cryptographic signature failed validation. The record content may have been altered or forged."
+            is_authentic = False
+            failure_message = "No Ed25519 cryptographic signature provided or recorded for this record."
+        else:
+            is_authentic = verify_signature(student, signature_to_check, session=session)
+            if not is_authentic:
+                failure_message = "The Ed25519 cryptographic signature failed validation. The record content may have been altered or forged."
 
     vlog = VerificationLog(
         verifier_id=None,

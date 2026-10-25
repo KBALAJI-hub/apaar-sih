@@ -1,5 +1,5 @@
 apaar_id,student_id,full_name,dob,gender,category,program_name,admission_year,admission_type,is_nri,oci_status,is_foreign_national,nationality,mode,consent_given
-100000000001,MIT-2024-001,Aryan Maharaj,2005-02-01,F,OBC,Master of Business Administration,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000002,MIT-2024-002,Udant Dewan,2003-12-04,M,EWS,Master of Business Administration,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000003,MIT-2024-003,Gagan Sami,2003-01-03,M,OBC,Master of Business Administration,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000004,MIT-2024-004,Ayushman Chander,2005-01-18,M,EWS,Master of Business Administration,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000106,DTI-XFER-2024-10,Faqid Dixit,2005-12-14,F,SC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000107,DTI-XFER-2024-11,Kala Divan,2001-02-23,M,SC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000108,DTI-XFER-2024-12,Joshua Barman,2005-01-27,M,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000109,DTI-XFER-2024-13,Janya Baral,2005-09-05,F,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True

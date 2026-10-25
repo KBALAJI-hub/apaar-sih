@@ -96,7 +96,12 @@ def _make_alert(session: Session, institution_id: int, code: str, score: float, 
 def run_anomaly_detection(session: Session) -> List[AnomalyAlert]:
     """Generate A1-A5 anomaly alerts based on institutional risk signals."""
     session.exec(delete(AnomalyAlert))
-    institutions = session.exec(select(Institution)).all()
+    active_inst_ids = session.exec(select(Student.institution_id).distinct()).all()
+    active_inst_ids = [aid for aid in active_inst_ids if aid is not None]
+    if active_inst_ids:
+        institutions = session.exec(select(Institution).where(Institution.id.in_(active_inst_ids))).all()
+    else:
+        institutions = session.exec(select(Institution).limit(20)).all()
     alerts: List[AnomalyAlert] = []
 
     if not institutions:
