@@ -49,6 +49,7 @@ def seed_database():
     with Session(engine) as session:
         # 2. Seed Default Settings
         print("[2/6] Seeding system settings...")
+        existing_keys = {s.key for s in session.exec(select(Setting)).all()}
         settings = [
             Setting(key="intake_warn_threshold", value="0.90"),
             Setting(key="intake_block_threshold", value="1.00"),
@@ -57,7 +58,8 @@ def seed_database():
             Setting(key="supernumerary_cap_default", value="0.10"),
         ]
         for s in settings:
-            session.add(s)
+            if s.key not in existing_keys:
+                session.add(s)
         session.commit()
 
         # 3. Seed Institutions and Program Quotas

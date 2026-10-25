@@ -107,18 +107,73 @@ def run_tests():
     # ---------------------------------------------------------
     print("\n[Step 3] Program intake-check API (ALLOW, WARN, BLOCK)...")
     with Session(engine) as s:
-        prog = s.exec(select(Program)).first()
-        prog_id = prog.id if prog else 1
-    
-    resp_check = client.get(f"/api/v1/programs/{prog_id}/intake-check")
-    if resp_check.status_code == 200:
-        data = resp_check.json()
-        decision = data.get("decision")
-        print(f"  Program {prog_id} Intake Check: {data} (Decision: {decision})")
-        results[3] = decision in ("ALLOW", "WARN", "BLOCK")
-    else:
-        print(f"  FAIL: intake-check returned {resp_check.status_code}")
-        results[3] = False
+        inst = s.exec(select(Institution)).first()
+        inst_id = inst.id if inst else 1
+        
+        # 1. Verify ALLOW on Program 1 (standard low-ratio program)
+        resp_allow = client.get("/api/v1/programs/1/intake-check")
+        data_allow = resp_allow.json() if resp_allow.status_code == 200 else {}
+        decision_allow = data_allow.get("decision")
+        is_allow = (resp_allow.status_code == 200 and decision_allow == "ALLOW")
+        print(f"  [ALLOW] Program 1: Status={resp_allow.status_code}, Decision={decision_allow}, Fill={data_allow.get('fill_ratio')}")
+
+        # 2. Verify BLOCK on Program 12 (exceeded intake)
+        resp_block = client.get("/api/v1/programs/12/intake-check")
+        data_block = resp_block.json() if resp_block.status_code == 200 else {}
+        decision_block = data_block.get("decision")
+        is_block = (resp_block.status_code == 200 and decision_block == "BLOCK")
+        print(f"  [BLOCK] Program 12: Status={resp_block.status_code}, Decision={decision_block}, Fill={data_block.get('fill_ratio')}")
+
+        # 3. Verify WARN on isolated program with 90% intake (near full)
+        temp_prog = Program(
+            name="Intake Guard Verification Program",
+            level="UG",
+            approved_intake=10,
+            academic_year="2024-25",
+            institution_id=inst_id,
+            supernumerary_cap=0.1,
+        )
+        s.add(temp_prog)
+        s.commit()
+        s.refresh(temp_prog)
+
+        test_stus = []
+        is_warn = False
+        decision_warn = None
+        try:
+            for i in range(9):
+                st = Student(
+                    apaar_id=f"9998000000{i:02d}",
+                    student_id=f"INTAKE-CHK-{i:02d}",
+                    full_name=f"Intake Student {i}",
+                    dob="2003-01-01",
+                    gender="M",
+                    category="General",
+                    institution_id=inst_id,
+                    program_id=temp_prog.id,
+                    admission_year=2024,
+                    admission_type="REGULAR",
+                    status="ACTIVE",
+                    consent_level=1,
+                )
+                s.add(st)
+                test_stus.append(st)
+            s.commit()
+
+            resp_warn = client.get(f"/api/v1/programs/{temp_prog.id}/intake-check")
+            data_warn = resp_warn.json() if resp_warn.status_code == 200 else {}
+            decision_warn = data_warn.get("decision")
+            is_warn = (resp_warn.status_code == 200 and decision_warn == "WARN")
+            print(f"  [WARN]  Program {temp_prog.id}: Status={resp_warn.status_code}, Decision={decision_warn}, Fill={data_warn.get('fill_ratio')}")
+        finally:
+            for st in test_stus:
+                s.delete(st)
+            s.delete(temp_prog)
+            s.commit()
+
+    step3_ok = is_allow and is_warn and is_block
+    print(f"  Step 3 Result: ALLOW={is_allow}, WARN={is_warn}, BLOCK={is_block} -> All Assertions Passed: {step3_ok}")
+    results[3] = step3_ok
 
     # ---------------------------------------------------------
     # STEP 4: Add duplicate APAAR -> R4 flag
