@@ -38,8 +38,15 @@ ERROR_CSVS: Dict[int, str] = {}
 
 @router.get("", response_class=RedirectResponse)
 @router.get("/", response_class=RedirectResponse)
-def institution_root():
-    """Redirect /institution and /institution/ to the dashboard."""
+def institution_root(request: Request, session: Session = Depends(get_session)):
+    """Redirect /institution and /institution/ to the dashboard or AICTE institutions directory."""
+    try:
+        from app.auth import get_current_user
+        user = get_current_user(request=request, session=session)
+        if user and user.role == "AICTE_ADMIN":
+            return RedirectResponse(url="/aicte/institutions", status_code=status.HTTP_303_SEE_OTHER)
+    except Exception:
+        pass
     return RedirectResponse(url="/institution/dashboard", status_code=status.HTTP_303_SEE_OTHER)
 
 

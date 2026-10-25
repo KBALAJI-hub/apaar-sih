@@ -63,8 +63,9 @@
             <div id="role-nav-links" class="flex items-center space-x-4 text-sm font-medium">
                 {% if role == 'AICTE_ADMIN' %}
                     <a href="/aicte/dashboard" class="text-gray-700 hover:text-indigo-600">AICTE Dashboard</a>
-                    <a href="/aicte/institutions" class="text-gray-700 hover:text-indigo-600">Institutions</a>
-                    <a href="/aicte/reports/compliance-summary" class="text-gray-700 hover:text-indigo-600">Compliance Summary</a>
+                    <a href="/aicte/institutions" class="text-gray-700 hover:text-indigo-600 font-medium">Institutions</a>
+                    <a href="/aicte/reports" class="text-gray-700 hover:text-indigo-600 font-medium">Reports</a>
+                    <a href="/aicte/duplicates" class="text-gray-700 hover:text-indigo-600">Duplicates</a>
                     <a href="/aicte/settings" class="text-gray-700 hover:text-indigo-600">Settings</a>
                     <a href="/aicte/audit" class="text-gray-700 hover:text-indigo-600">Audit Logs</a>
                     <a href="/logout" class="text-red-600 hover:text-red-700">Logout</a>
@@ -84,6 +85,8 @@
                     <!-- Public / Unauthenticated links -->
                     <a href="/" class="text-gray-600 hover:text-indigo-600">Home</a>
                     <a href="/verify" class="text-gray-600 hover:text-indigo-600">Verify</a>
+                    <a href="/institution" class="text-gray-600 hover:text-indigo-600">Institution</a>
+                    <a href="/report" class="text-gray-600 hover:text-indigo-600">Reports</a>
                     <a href="/login" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">Login</a>
                 {% endif %}
             </div>
