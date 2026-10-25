@@ -169,7 +169,7 @@ def generate():
         r_f8 = free_regs[42]
         bad_rows.append([
             r_f8.apaar_id, "DTI-2024-309", r_f8.full_name, r_f8.dob, r_f8.gender,
-            "OBC", p_names[2 % len(p_names)], 2024, "REGULAR", "False", "False", "False", "Indian", "False", "True"
+            "OBC", p_names[2 % len(p_names)], 2024, "REGULAR", "False", "False", "False", "Indian", "FULL_TIME", "False"
         ])
         r_f9 = free_regs[43]
         bad_rows.append([

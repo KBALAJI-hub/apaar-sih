@@ -1,26 +1,26 @@
 apaar_id,student_id,full_name,dob,gender,category,program_name,admission_year,admission_type,is_nri,oci_status,is_foreign_national,nationality,mode,consent_given
-100000000550,DTI-2024-101,Jeremiah Mitter,2005-02-05,F,GENERAL,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000550,DTI-2024-101,Jeremiah Mitter,2005-02-05,F,GENERAL,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
 100000000551,DTI-2024-102,Yadavi Ganguly,2006-02-15,F,OBC,B.Tech Computer Science and Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000552,DTI-2024-103,Onveer Nazareth,2006-09-12,F,GENERAL,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000553,DTI-2024-104,Ayush Bumb,2005-11-19,M,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000552,DTI-2024-103,Onveer Nazareth,2006-09-12,F,GENERAL,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000553,DTI-2024-104,Ayush Bumb,2005-11-19,M,OBC,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
 100000000554,DTI-2024-105,Alka Kade,2002-07-17,M,GENERAL,B.Tech Computer Science and Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000555,DTI-2024-106,Azaan Tank,2001-09-05,M,OBC,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000556,DTI-2024-107,Chasmum Subramanian,2002-03-11,F,GENERAL,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000555,DTI-2024-106,Azaan Tank,2001-09-05,M,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000556,DTI-2024-107,Chasmum Subramanian,2002-03-11,F,GENERAL,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
 100000000569,DTI-2024-108,Falak Munshi,2002-08-14,M,OBC,B.Tech Computer Science and Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000570,DTI-2024-109,Nathaniel Tara,2004-04-11,F,GENERAL,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000571,DTI-2024-110,Wishi Morar,2003-12-11,M,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000570,DTI-2024-109,Nathaniel Tara,2004-04-11,F,GENERAL,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000571,DTI-2024-110,Wishi Morar,2003-12-11,M,OBC,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
 100000000572,DTI-2024-111,Arin Chana,2004-03-25,F,GENERAL,B.Tech Computer Science and Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000573,DTI-2024-112,Yashasvi Shankar,2005-09-04,F,OBC,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000574,DTI-2024-113,Tanveer Pandit,2002-08-04,F,GENERAL,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000573,DTI-2024-112,Yashasvi Shankar,2005-09-04,F,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000574,DTI-2024-113,Tanveer Pandit,2002-08-04,F,GENERAL,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
 100000000575,DTI-2024-114,Chandresh Manda,2004-04-05,F,OBC,B.Tech Computer Science and Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000576,DTI-2024-115,Upma Mangal,2001-05-13,M,GENERAL,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000577,DTI-2024-116,Hritik Sankar,2002-03-27,F,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000576,DTI-2024-115,Upma Mangal,2001-05-13,M,GENERAL,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000577,DTI-2024-116,Hritik Sankar,2002-03-27,F,OBC,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
 100000000578,DTI-2024-117,Aishani Pau,2005-12-11,F,GENERAL,B.Tech Computer Science and Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000579,DTI-2024-118,Jasmit Bath,2002-08-17,M,OBC,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000580,DTI-2024-119,Charan Hayer,2004-05-16,F,GENERAL,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000579,DTI-2024-118,Jasmit Bath,2002-08-17,M,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000580,DTI-2024-119,Charan Hayer,2004-05-16,F,GENERAL,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
 100000000581,DTI-2024-120,Bhavya Borah,2001-07-17,M,OBC,B.Tech Computer Science and Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000582,DTI-2024-121,Yamini Seshadri,2002-04-19,F,GENERAL,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000583,DTI-2024-122,Jagat Dave,2001-01-10,F,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000582,DTI-2024-121,Yamini Seshadri,2002-04-19,F,GENERAL,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000583,DTI-2024-122,Jagat Dave,2001-01-10,F,OBC,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
 100000000584,DTI-2024-123,Meera Prakash,2005-11-22,F,GENERAL,B.Tech Computer Science and Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000585,DTI-2024-124,Jasmit Dhawan,2003-09-01,F,OBC,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
-100000000586,DTI-2024-125,Yashodhara Ratti,2004-03-09,M,GENERAL,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000585,DTI-2024-124,Jasmit Dhawan,2003-09-01,F,OBC,B.Tech Electronics and Communication,2024,REGULAR,False,False,False,Indian,FULL_TIME,True
+100000000586,DTI-2024-125,Yashodhara Ratti,2004-03-09,M,GENERAL,B.Tech Mechanical Engineering,2024,REGULAR,False,False,False,Indian,FULL_TIME,True

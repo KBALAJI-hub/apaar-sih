@@ -6,12 +6,16 @@ Generates deterministic demo data with fixed seeds:
 - Planted problems for SIH PS 26263 validation & anomaly rules
 """
 
+import os
 import random
+import shutil
+from datetime import datetime
+from pathlib import Path
 from faker import Faker
 from sqlmodel import Session, select
 
 from app.auth import hash_password
-from app.database import engine, reset_db
+from app.database import engine, reset_db, IS_POSTGRES, PRIMARY_DB_PATH, init_test_db
 from app.models import (
     ApaarRegistry,
     Institution,
@@ -41,6 +45,25 @@ def seed_database():
     print("=" * 65)
     print("  APAAR Verify - Database Seeder (SIH PS 26263)")
     print("=" * 65)
+
+    # 0. Safety Pre-flight Verification & Backup
+    if IS_POSTGRES or engine.dialect.name != "sqlite":
+        raise RuntimeError(
+            f"CRITICAL SAFETY GUARD: Reseeding is strictly restricted to local SQLite. Current dialect: {engine.dialect.name}"
+        )
+    allow_reset = os.getenv("ALLOW_RESET_DB", "").lower() in ("1", "true", "yes")
+    if not allow_reset:
+        raise RuntimeError(
+            "CRITICAL SAFETY GUARD: ALLOW_RESET_DB must be set to 'true' in .env to perform a reset."
+        )
+
+    if PRIMARY_DB_PATH.exists() and PRIMARY_DB_PATH.stat().st_size > 0:
+        backup_dir = PRIMARY_DB_PATH.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = backup_dir / f"apaar_backup_{ts}.db"
+        shutil.copyfile(PRIMARY_DB_PATH, backup_file)
+        print(f"[Backup] Created pre-reset backup at: {backup_file}")
 
     # 1. Reset tables cleanly
     print("[1/6] Dropping and recreating tables...")
@@ -470,6 +493,29 @@ def seed_database():
             session.add(su)
         session.commit()
 
+        # Seed initial AuditLog and VerificationLog records for table completeness
+        from app.audit import log_action
+        from app.models import VerificationLog
+
+        log_action(
+            session=session,
+            user=aicte_admin,
+            action="SYSTEM_INIT",
+            entity="SYSTEM",
+            entity_id="AICTE-PLATFORM",
+            details="System initialization and database seed completed with baseline configurations.",
+        )
+
+        ver_log = VerificationLog(
+            verifier_id=verifier.id,
+            apaar_id=students[0].apaar_id,
+            tier_shown=2,
+            result="VALID",
+            timestamp=utc_now(),
+        )
+        session.add(ver_log)
+        session.commit()
+
     from app.anomaly import run_anomaly_detection
     from app.validation import run_full_validation
 
@@ -499,6 +545,10 @@ def seed_database():
     print("=" * 65)
     print(f"  Summary: 5 Institutions | {len(registry_records)} Registry | {len(students)} Students")
     print("=" * 65 + "\n")
+
+    # Synchronize disposable test database with the freshly seeded primary database
+    init_test_db(force_refresh=True)
+    print("  [Test DB] Synchronized test_apaar.db with fresh baseline.\n")
 
 
 if __name__ == "__main__":
