@@ -205,7 +205,32 @@ def rule_r11_program_existence(
 ) -> Optional[Dict[str, str]]:
     """R11: Program not found for this institution and year (HIGH - Reject row)."""
     prog_key = str(program_ref).strip().lower()
-    program = program_map.get(prog_key)
+    try:
+        submitted_year = int(admission_year) if admission_year else None
+    except (ValueError, TypeError):
+        submitted_year = None
+
+    # Helper to lookup program with fallback for 'Engineering' suffix
+    def find_program(key: str, year: Optional[int]):
+        if year and (key, year) in program_map:
+            return program_map[(key, year)]
+        if key in program_map:
+            return program_map[key]
+        if key.endswith(" engineering"):
+            short_key = key[:-12].strip()
+            if year and (short_key, year) in program_map:
+                return program_map[(short_key, year)]
+            if short_key in program_map:
+                return program_map[short_key]
+        elif not key.endswith(" engineering"):
+            long_key = f"{key} engineering"
+            if year and (long_key, year) in program_map:
+                return program_map[(long_key, year)]
+            if long_key in program_map:
+                return program_map[long_key]
+        return None
+
+    program = find_program(prog_key, submitted_year)
     if program is None:
         return {
             "rule_code": "R11",
@@ -213,23 +238,24 @@ def rule_r11_program_existence(
             "message": f"Program '{program_ref}' is not registered under this institution's AICTE approved quota.",
             "recommended_action": "Check AICTE approved program titles and academic year.",
         }
-    try:
-        submitted_year = int(admission_year)
-        program_start_year = int(str(program.academic_year).split("-", 1)[0])
-    except (AttributeError, TypeError, ValueError):
-        return {
-            "rule_code": "R11",
-            "severity": "HIGH",
-            "message": f"Program '{program_ref}' could not be matched to a valid admission year.",
-            "recommended_action": "Check the approved program academic year and submitted admission year.",
-        }
-    if submitted_year != program_start_year:
-        return {
-            "rule_code": "R11",
-            "severity": "HIGH",
-            "message": f"Program '{program_ref}' is not approved for admission year {submitted_year}.",
-            "recommended_action": "Select the program version approved for the student's admission year.",
-        }
+
+    if submitted_year:
+        try:
+            program_start_year = int(str(program.academic_year).split("-", 1)[0])
+            if submitted_year != program_start_year:
+                alt = find_program(prog_key, submitted_year)
+                if alt and int(str(alt.academic_year).split("-", 1)[0]) == submitted_year:
+                    pass
+                else:
+                    return {
+                        "rule_code": "R11",
+                        "severity": "HIGH",
+                        "message": f"Program '{program_ref}' is not approved for admission year {submitted_year}.",
+                        "recommended_action": "Select the program version approved for the student's admission year.",
+                    }
+        except (AttributeError, TypeError, ValueError):
+            pass
+
     return None
 
 
@@ -264,8 +290,14 @@ def build_validation_context(institution_id: int, session: Session) -> Dict[str,
     ).all()
     program_map = {}
     for p in progs:
-        program_map[p.name.strip().lower()] = p
+        p_name = p.name.strip().lower()
+        program_map[p_name] = p
         program_map[str(p.id)] = p
+        try:
+            start_yr = int(str(p.academic_year).split("-", 1)[0])
+            program_map[(p_name, start_yr)] = p
+        except (ValueError, TypeError):
+            pass
 
     # 3. Existing APAAR IDs in this institution
     inst_students = session.exec(
