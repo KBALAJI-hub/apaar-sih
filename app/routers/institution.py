@@ -214,6 +214,8 @@ def create_student(
     Create a single student record with automated compliance validation and Intake Guard enforcement.
     """
     inst_id = user.institution_id
+    if consent_level not in (0, 1, 2):
+        raise HTTPException(status_code=422, detail="Invalid consent tier. Allowed tiers are 0, 1, or 2.")
     programs = session.exec(select(Program).where(Program.institution_id == inst_id)).all()
     program = session.get(Program, program_id)
 
@@ -384,6 +386,8 @@ def update_student(
     user: User = Depends(require_role("INSTITUTION")),
 ):
     """Update student profile fields with audit trail."""
+    if consent_level not in (0, 1, 2):
+        raise HTTPException(status_code=422, detail="Invalid consent tier. Allowed tiers are 0, 1, or 2.")
     student = session.get(Student, id)
     if not student or student.institution_id != user.institution_id:
         raise HTTPException(status_code=404, detail="Student not found or access denied")
