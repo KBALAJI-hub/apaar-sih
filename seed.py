@@ -469,9 +469,16 @@ def seed_database():
         session.commit()
 
     from app.anomaly import run_anomaly_detection
+    from app.validation import run_full_validation
 
+    print("[7/7] Generating validation flags and anomaly risk scores...")
     with Session(engine) as session:
+        inst_ids = session.exec(select(Student.institution_id).distinct()).all()
+        for iid in inst_ids:
+            if iid:
+                run_full_validation(iid, session)
         run_anomaly_detection(session)
+        session.commit()
 
     # Print summary credentials
     print("\n" + "=" * 65)

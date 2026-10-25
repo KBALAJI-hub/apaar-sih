@@ -152,19 +152,20 @@ def get_session() -> Generator[Session, None, None]:
     If Supabase drops connection or becomes unavailable, seamlessly falls back to
     the local SQLite backup (apaar.db).
     """
+    selected_engine = fallback_engine
     if IS_POSTGRES:
         try:
-            with Session(engine) as session:
-                session.exec(text("SELECT 1"))
-                yield session
-                return
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            selected_engine = engine
         except Exception as exc:
             import logging
             logging.getLogger("uvicorn.error").warning(
                 f"[DATABASE FAILOVER] Primary Supabase connection failed ({exc}). Falling back to local SQLite backup."
             )
+            selected_engine = fallback_engine
 
-    with Session(fallback_engine) as session:
+    with Session(selected_engine) as session:
         yield session
 
 
@@ -175,9 +176,9 @@ def get_db_session() -> Session:
     """
     if IS_POSTGRES:
         try:
-            session = Session(engine)
-            session.exec(text("SELECT 1"))
-            return session
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            return Session(engine)
         except Exception as exc:
             import logging
             logging.getLogger("uvicorn.error").warning(
