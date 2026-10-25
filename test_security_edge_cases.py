@@ -14,6 +14,7 @@ import sys
 import unittest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
+from sqlalchemy import text
 
 from app.main import app
 from app.database import engine
@@ -249,8 +250,11 @@ class TestSecurityEdgeCases(unittest.TestCase):
                 self.assertEqual(resp_t0.status_code, 200)
                 self.assertIn("student has not consented to share details", resp_t0.text)
                 self.assertNotIn("Confidential Student", resp_t0.text)
+                self.assertNotIn(test_stu.student_id, resp_t0.text)
                 self.assertNotIn("1999-12-31", resp_t0.text)
                 self.assertNotIn("Special-Cat-Secret", resp_t0.text)
+                self.assertNotIn(inst.name, resp_t0.text)
+                self.assertNotIn(prog.name, resp_t0.text)
 
                 # B) Public verification / QR route (signed valid record, but Tier 0 consent)
                 resp_pub_t0 = client.get(f"/verify/record/{test_stu.student_id}?sig={test_stu.record_signature}")
@@ -259,10 +263,13 @@ class TestSecurityEdgeCases(unittest.TestCase):
                 self.assertIn("VERIFIED", resp_pub_t0.text)
                 self.assertIn("APAAR valid, student has not consented to share details", resp_pub_t0.text)
                 self.assertNotIn("Confidential Student", resp_pub_t0.text)
+                self.assertNotIn(test_stu.student_id, resp_pub_t0.text)
                 self.assertNotIn("1999-12-31", resp_pub_t0.text)
                 self.assertNotIn("Special-Cat-Secret", resp_pub_t0.text)
                 self.assertNotIn(inst.name, resp_pub_t0.text)
+                self.assertNotIn(inst.aicte_id, resp_pub_t0.text)
                 self.assertNotIn(prog.name, resp_pub_t0.text)
+                self.assertNotIn(str(test_stu.admission_year), resp_pub_t0.text)
 
                 # -------------------------------------------------------------
                 # Tier 1: Directory details disclosed; personal identity hidden
@@ -278,6 +285,7 @@ class TestSecurityEdgeCases(unittest.TestCase):
                 self.assertIn(inst.name, resp_t1.text)
                 self.assertIn(prog.name, resp_t1.text)
                 self.assertNotIn("Confidential Student", resp_t1.text)
+                self.assertNotIn(test_stu.student_id, resp_t1.text)
                 self.assertNotIn("1999-12-31", resp_t1.text)
                 self.assertNotIn("Special-Cat-Secret", resp_t1.text)
 
@@ -290,6 +298,7 @@ class TestSecurityEdgeCases(unittest.TestCase):
                 self.assertIn(inst.name, resp_pub_t1.text)
                 self.assertIn(prog.name, resp_pub_t1.text)
                 self.assertNotIn("Confidential Student", resp_pub_t1.text)
+                self.assertNotIn(test_stu.student_id, resp_pub_t1.text)
                 self.assertNotIn("1999-12-31", resp_pub_t1.text)
                 self.assertNotIn("Special-Cat-Secret", resp_pub_t1.text)
 
@@ -305,6 +314,7 @@ class TestSecurityEdgeCases(unittest.TestCase):
                 self.assertEqual(resp_t2.status_code, 200)
                 self.assertIn("Full Authentic Credential (Tier 2)", resp_t2.text)
                 self.assertIn("Confidential Student", resp_t2.text)
+                self.assertIn(test_stu.student_id, resp_t2.text)
                 self.assertIn("1999-12-31", resp_t2.text)
                 self.assertIn("Special-Cat-Secret", resp_t2.text)
                 self.assertIn("AUTHENTIC", resp_t2.text)
@@ -316,6 +326,7 @@ class TestSecurityEdgeCases(unittest.TestCase):
                 self.assertIn("VERIFIED", resp_pub_t2.text)
                 self.assertIn("Full Credential Verification (Tier 2)", resp_pub_t2.text)
                 self.assertIn("Confidential Student", resp_pub_t2.text)
+                self.assertIn(test_stu.student_id, resp_pub_t2.text)
                 self.assertIn(inst.name, resp_pub_t2.text)
                 self.assertIn(prog.name, resp_pub_t2.text)
             finally:
@@ -446,6 +457,288 @@ class TestSecurityEdgeCases(unittest.TestCase):
         self.assertNotIn("sec_user", sanitized)
         self.assertNotIn("MySecretPassword123", sanitized)
         self.assertIn("://***:***@", sanitized)
+
+
+    def test_09_invalid_and_out_of_range_consent_values_fail_closed_to_tier_0(self):
+        """
+        Verify that out-of-range, malformed, or missing stored consent values (-1, 3, 99, None)
+        strictly fail closed to Tier 0 across both public verification and authenticated verifier portal.
+        Never interpret unknown consent as Tier 2.
+        """
+        resp_login_ver = client.post("/login", data={"username": "employer1", "password": "Verify@123"}, follow_redirects=False)
+        ver_cookie = resp_login_ver.cookies.get("access_token")
+        ver_client = TestClient(app, cookies={"access_token": ver_cookie}, raise_server_exceptions=False)
+
+        with Session(engine) as session:
+            inst = session.exec(select(Institution)).first()
+            prog = session.exec(select(Program).where(Program.institution_id == inst.id)).first()
+
+            test_stu = Student(
+                apaar_id="999000000109",
+                student_id="SEC-CONSENT-009",
+                full_name="Secret Consent Student",
+                dob="2001-09-09",
+                gender="M",
+                category="OBC",
+                institution_id=inst.id,
+                program_id=prog.id,
+                admission_year=2024,
+                admission_type="REGULAR",
+                status="ACTIVE",
+                consent_level=99,
+            )
+            sign_record(test_stu, session)
+            session.add(test_stu)
+            session.commit()
+            session.refresh(test_stu)
+
+            try:
+                from app.routers.verify import get_effective_consent_tier
+                self.assertEqual(get_effective_consent_tier(None), 0)
+                self.assertEqual(get_effective_consent_tier("xyz"), 0)
+                self.assertEqual(get_effective_consent_tier(-1), 0)
+                self.assertEqual(get_effective_consent_tier(99), 0)
+                self.assertEqual(get_effective_consent_tier(3), 0)
+                self.assertEqual(get_effective_consent_tier(0), 0)
+                self.assertEqual(get_effective_consent_tier(1), 1)
+                self.assertEqual(get_effective_consent_tier(2), 2)
+
+                for bad_consent in [-1, 3, 99]:
+                    test_stu.consent_level = bad_consent
+                    session.add(test_stu)
+                    session.commit()
+                    session.refresh(test_stu)
+
+                    # 1. Verifier portal lookup must fail closed to Tier 0
+                    resp_v = ver_client.post("/verify", data={"apaar_id": test_stu.apaar_id})
+                    self.assertEqual(resp_v.status_code, 200)
+                    self.assertIn("student has not consented to share details", resp_v.text)
+                    self.assertNotIn("Secret Consent Student", resp_v.text)
+                    self.assertNotIn(test_stu.student_id, resp_v.text)
+                    self.assertNotIn("2001-09-09", resp_v.text)
+                    self.assertNotIn(inst.name, resp_v.text)
+                    self.assertNotIn(prog.name, resp_v.text)
+
+                    # 2. Public verification must fail closed to Tier 0
+                    resp_p = client.get(f"/verify/record/{test_stu.student_id}?sig={test_stu.record_signature}")
+                    self.assertEqual(resp_p.status_code, 200)
+                    self.assertIn("Authentic record", resp_p.text)
+                    self.assertIn("VERIFIED", resp_p.text)
+                    self.assertIn("student has not consented to share details", resp_p.text)
+                    self.assertNotIn("Secret Consent Student", resp_p.text)
+                    self.assertNotIn(test_stu.student_id, resp_p.text)
+                    self.assertNotIn("2001-09-09", resp_p.text)
+                    self.assertNotIn(inst.name, resp_p.text)
+                    self.assertNotIn(prog.name, resp_p.text)
+            finally:
+                session.delete(test_stu)
+                session.exec(text(f"DELETE FROM verificationlog WHERE apaar_id = '999000000109'"))
+                session.commit()
+
+    def test_10_invalid_consent_updates_rejected_with_422(self):
+        """
+        Confirm that invalid consent update requests are rejected with HTTP 422:
+        - Values -1, 3, 99, malformed strings, and missing values.
+        """
+        with Session(engine) as session:
+            stu = session.exec(select(Student)).first()
+            apaar_id = stu.apaar_id
+
+        # 1. POST /student/consent
+        bad_values = ["-1", "3", "99", "malformed", ""]
+        for bad_val in bad_values:
+            resp = client.post(
+                "/student/consent",
+                data={"apaar_id": apaar_id, "action": "update_consent", "consent_level": bad_val},
+            )
+            self.assertEqual(resp.status_code, 422, f"Expected 422 for consent_level='{bad_val}', got {resp.status_code}")
+
+        # Missing consent_level
+        resp_missing = client.post(
+            "/student/consent",
+            data={"apaar_id": apaar_id, "action": "update_consent"},
+        )
+        self.assertEqual(resp_missing.status_code, 422)
+
+        # 2. POST /student/dashboard/consent (as student)
+        resp_login = client.post("/login", data={"username": "student1", "password": "Student@123"}, follow_redirects=False)
+        std_cookie = resp_login.cookies.get("access_token")
+        std_client = TestClient(app, cookies={"access_token": std_cookie}, raise_server_exceptions=False)
+
+        for bad_val in ["-1", "3", "99", "invalid"]:
+            resp = std_client.post("/student/dashboard/consent", data={"consent_level": bad_val}, follow_redirects=False)
+            self.assertEqual(resp.status_code, 422, f"Expected 422 for student dashboard consent '{bad_val}', got {resp.status_code}")
+
+        # 3. PUT /api/v1/students/{apaar_id}
+        with Session(engine) as session:
+            inst = session.exec(select(Institution)).first()
+            api_key = inst.api_key
+            test_stu = session.exec(select(Student).where(Student.institution_id == inst.id)).first()
+
+        for bad_int in [-1, 3, 99]:
+            resp = client.put(
+                f"/api/v1/students/{test_stu.apaar_id}",
+                headers={"X-API-Key": api_key},
+                json={"consent_level": bad_int},
+            )
+            self.assertEqual(resp.status_code, 422, f"Expected 422 for API consent_level={bad_int}, got {resp.status_code}")
+
+    def test_11_public_verification_url_signature_policy(self):
+        """
+        Verify explicit public verification policy:
+        - URL signature (?sig=...) is strictly required.
+        - Missing, empty, or invalid signatures fail verification (TAMPERED/FAILED).
+        - No student details are leaked when verification fails.
+        """
+        with Session(engine) as session:
+            inst = session.exec(select(Institution)).first()
+            prog = session.exec(select(Program).where(Program.institution_id == inst.id)).first()
+
+            test_stu = Student(
+                apaar_id="999000000111",
+                student_id="SEC-SIG-011",
+                full_name="Signed Private Student",
+                dob="2002-02-02",
+                gender="F",
+                category="General",
+                institution_id=inst.id,
+                program_id=prog.id,
+                admission_year=2024,
+                admission_type="REGULAR",
+                status="ACTIVE",
+                consent_level=2,
+            )
+            sign_record(test_stu, session)
+            session.add(test_stu)
+            session.commit()
+            session.refresh(test_stu)
+
+            try:
+                # 1. Missing signature (?sig omitted) -> Fails verification, zero details leaked
+                resp_no_sig = client.get(f"/verify/record/{test_stu.student_id}")
+                self.assertEqual(resp_no_sig.status_code, 200)
+                self.assertIn("TAMPERED or not found", resp_no_sig.text)
+                self.assertIn("No Ed25519 cryptographic signature provided", resp_no_sig.text)
+                self.assertNotIn("Signed Private Student", resp_no_sig.text)
+                self.assertNotIn("2002-02-02", resp_no_sig.text)
+                self.assertNotIn(inst.name, resp_no_sig.text)
+                self.assertNotIn(prog.name, resp_no_sig.text)
+
+                # 2. Empty signature (?sig=) -> Fails verification, zero details leaked
+                resp_empty_sig = client.get(f"/verify/record/{test_stu.student_id}?sig=")
+                self.assertEqual(resp_empty_sig.status_code, 200)
+                self.assertIn("TAMPERED or not found", resp_empty_sig.text)
+                self.assertNotIn("Signed Private Student", resp_empty_sig.text)
+
+                # 3. Invalid signature -> Fails verification, zero details leaked
+                resp_bad_sig = client.get(f"/verify/record/{test_stu.student_id}?sig=invalid_sig_bytes")
+                self.assertEqual(resp_bad_sig.status_code, 200)
+                self.assertIn("TAMPERED or not found", resp_bad_sig.text)
+                self.assertIn("failed validation", resp_bad_sig.text)
+                self.assertNotIn("Signed Private Student", resp_bad_sig.text)
+
+                # 4. Valid signature -> Passes verification
+                resp_valid = client.get(f"/verify/record/{test_stu.student_id}?sig={test_stu.record_signature}")
+                self.assertEqual(resp_valid.status_code, 200)
+                self.assertIn("Authentic record", resp_valid.text)
+                self.assertIn("VERIFIED", resp_valid.text)
+                self.assertIn("Signed Private Student", resp_valid.text)
+            finally:
+                session.delete(test_stu)
+                session.exec(text(f"DELETE FROM verificationlog WHERE apaar_id = '999000000111'"))
+                session.commit()
+
+    def test_12_tampered_records_never_leak_restricted_details(self):
+        """
+        Verify that tampered fields cause verification failure and NEVER disclose restricted student details.
+        """
+        with Session(engine) as session:
+            inst = session.exec(select(Institution)).first()
+            prog = session.exec(select(Program).where(Program.institution_id == inst.id)).first()
+
+            test_stu = Student(
+                apaar_id="999000000112",
+                student_id="SEC-TAMPER-012",
+                full_name="Authentic Student 12",
+                dob="2003-03-03",
+                gender="M",
+                category="General",
+                institution_id=inst.id,
+                program_id=prog.id,
+                admission_year=2024,
+                admission_type="REGULAR",
+                status="ACTIVE",
+                consent_level=2,
+            )
+            sign_record(test_stu, session)
+            session.add(test_stu)
+            session.commit()
+            session.refresh(test_stu)
+            valid_sig = test_stu.record_signature
+
+            try:
+                # Tamper student name in database
+                test_stu.full_name = "Forged Altered Name"
+                session.add(test_stu)
+                session.commit()
+
+                resp_tampered = client.get(f"/verify/record/{test_stu.student_id}?sig={valid_sig}")
+                self.assertEqual(resp_tampered.status_code, 200)
+                self.assertIn("TAMPERED or not found", resp_tampered.text)
+                self.assertNotIn("Authentic record", resp_tampered.text)
+                # Verify restricted details are NOT in the response
+                self.assertNotIn("Forged Altered Name", resp_tampered.text)
+                self.assertNotIn("Authentic Student 12", resp_tampered.text)
+                self.assertNotIn("2003-03-03", resp_tampered.text)
+                self.assertNotIn(inst.name, resp_tampered.text)
+                self.assertNotIn(prog.name, resp_tampered.text)
+            finally:
+                session.delete(test_stu)
+                session.exec(text(f"DELETE FROM verificationlog WHERE apaar_id = '999000000112'"))
+                session.commit()
+
+    def test_13_verification_and_qr_do_not_regenerate_signatures(self):
+        """
+        Confirm verification lookups and QR generation never regenerate or mutate record signatures.
+        """
+        with Session(engine) as session:
+            inst = session.exec(select(Institution)).first()
+            prog = session.exec(select(Program).where(Program.institution_id == inst.id)).first()
+
+            test_stu = Student(
+                apaar_id="999000000113",
+                student_id="SEC-MUT-013",
+                full_name="No Mutate Student",
+                dob="2002-12-12",
+                gender="F",
+                category="General",
+                institution_id=inst.id,
+                program_id=prog.id,
+                admission_year=2024,
+                admission_type="REGULAR",
+                status="ACTIVE",
+                consent_level=2,
+                record_signature=None,
+            )
+            session.add(test_stu)
+            session.commit()
+            session.refresh(test_stu)
+
+            try:
+                # Trigger verification endpoints
+                client.get(f"/verify/record/{test_stu.student_id}")
+                client.get(f"/verify/record/{test_stu.student_id}?sig=test_dummy")
+                client.get(f"/verify/record/{test_stu.student_id}/qr")
+                client.post("/verify", data={"apaar_id": test_stu.apaar_id})
+
+                # Refresh from DB
+                session.expire_all()
+                db_stu = session.get(Student, test_stu.id)
+                self.assertIsNone(db_stu.record_signature, "record_signature must remain None after all lookups")
+            finally:
+                session.delete(test_stu)
+                session.exec(text(f"DELETE FROM verificationlog WHERE apaar_id = '999000000113'"))
+                session.commit()
 
 
 if __name__ == "__main__":

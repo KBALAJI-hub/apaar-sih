@@ -10,7 +10,7 @@ Implements:
 from collections import defaultdict
 from pathlib import Path
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -18,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app.audit import log_action
-from app.auth import get_current_user, require_role
+from app.auth import get_current_user, require_role, create_access_token
 from app.database import get_session
 from app.models import Institution, Program, Student, User, VerificationLog, utc_now
 from app.security import (
@@ -61,6 +61,26 @@ def get_verifier_identifier(request: Request, user: Optional[User]) -> Tuple[Opt
         return user.id, f"user:{user.username}"
     client_ip = request.client.host if request.client else "127.0.0.1"
     return None, f"ip:{client_ip}"
+
+
+def get_effective_consent_tier(consent_level: Any) -> int:
+    """
+    Safely resolves consent tier enforcing:
+    - Tier 0: Authenticity/status only. No student identity or institutional/program details.
+    - Tier 1: Institution, AICTE ID, program, admission year, and enrollment status. Mask personal identity fields.
+    - Tier 2: Full details only when explicitly authorized by valid student consent.
+
+    Any unknown, missing, malformed, or out-of-range consent value strictly fails closed to Tier 0.
+    """
+    if consent_level is None:
+        return 0
+    try:
+        tier_int = int(consent_level)
+    except (ValueError, TypeError):
+        return 0
+    if tier_int in (1, 2):
+        return tier_int
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +138,7 @@ def handle_student_consent(
     action: str = Form("login"),
     apaar_id: str = Form(...),
     otp: Optional[str] = Form(None),
-    consent_level: Optional[int] = Form(None),
+    consent_level: Optional[str] = Form(None),
     session: Session = Depends(get_session),
     user: Optional[User] = Depends(get_current_user),
 ):
@@ -164,16 +184,24 @@ def handle_student_consent(
             .order_by(VerificationLog.id.desc())
         ).all()
 
-        return templates.TemplateResponse(
+        token = create_access_token({"sub": f"student:{student.apaar_id}", "role": "STUDENT", "apaar_id": student.apaar_id})
+        resp = templates.TemplateResponse(
             request=request,
             name="student_consent.html",
             context={
                 "student": student,
                 "lookups": lookups,
-                "role": user.role if user else None,
+                "role": "STUDENT",
                 "success": "DigiLocker identity authenticated successfully.",
             },
         )
+        resp.set_cookie(
+            key="access_token",
+            value=token,
+            httponly=True,
+            samesite="lax",
+        )
+        return resp
 
     # Step B: Update Consent Level (0, 1, or 2)
     elif action == "update_consent":
@@ -189,9 +217,20 @@ def handle_student_consent(
                 status_code=404,
             )
 
-        new_level = int(consent_level) if consent_level is not None else 1
-        if new_level not in [0, 1, 2]:
-            new_level = 1
+        if consent_level is None or not str(consent_level).strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid consent tier. Allowed tiers are 0 (Authenticity only), 1 (Directory only), or 2 (Full record).",
+            )
+        try:
+            new_level = int(consent_level)
+            if new_level not in (0, 1, 2):
+                raise ValueError("Out of range")
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Invalid consent tier. Allowed tiers are 0 (Authenticity only), 1 (Directory only), or 2 (Full record).",
+            )
 
         student.consent_level = new_level
         student.consent_timestamp = utc_now() if new_level > 0 else None
@@ -307,10 +346,12 @@ def process_verifier_lookup(
         tier = -1
         result_status = "NOT_FOUND"
     else:
-        institution = session.get(Institution, student.institution_id)
-        program = session.get(Program, student.program_id)
-        tier = student.consent_level
+        effective_tier = get_effective_consent_tier(student.consent_level)
+        tier = effective_tier
         result_status = "NO_CONSENT" if tier == 0 else "VALID"
+        if tier >= 1:
+            institution = session.get(Institution, student.institution_id)
+            program = session.get(Program, student.program_id)
 
     # 3. Log to VerificationLog
     vlog = VerificationLog(
@@ -341,9 +382,9 @@ def process_verifier_lookup(
             "result_ready": True,
             "searched_apaar": clean_apaar,
             "tier": tier,
-            "student": student,
-            "institution": institution,
-            "program": program,
+            "student": student if tier >= 1 else None,
+            "institution": institution if tier >= 1 else None,
+            "program": program if tier >= 1 else None,
             "result_status": result_status,
         },
     )
@@ -362,13 +403,16 @@ def verify_public_record(
     """
     Public record verification page:
     - Resolves student by institutional roll ID, integer PK, or 12-digit APAAR ID.
-    - Recomputes canonical record and checks Ed25519 signature.
+    - Strictly requires presented URL Ed25519 digital signature (?sig=...).
+      Missing, empty, malformed, or invalid signatures fail verification.
+    - Recomputes canonical record and checks Ed25519 signature. Never regenerates signatures during verification.
     - Strictly enforces student consent tiers (Tier 0, 1, 2):
-        * Tier 0: Valid/authentic cryptographic status only; student details withheld.
+        * Tier 0: Valid/authentic cryptographic status only; student identity and institutional details withheld.
         * Tier 1: Directory verification (institution, program, year, status); personal details withheld.
         * Tier 2: Full details permitted by student.
+    - Unknown, missing, malformed, or out-of-range stored consent strictly fails closed to Tier 0.
+    - Tampered or unverified records disclose zero student details.
     - Displays 'Authentic record' or 'TAMPERED or not found' with minimal permitted info.
-    - Never generates replacement signatures during verification.
     - Logs audit trail to VerificationLog.
     """
     student = session.exec(select(Student).where(Student.student_id == student_id)).first()
@@ -384,26 +428,26 @@ def verify_public_record(
 
     if not student:
         failure_message = f"No student record found matching identifier '{student_id}' in the AICTE national registry."
+    elif not sig or not sig.strip():
+        is_authentic = False
+        failure_message = "No Ed25519 cryptographic signature provided. Public verification requires a valid '?sig=' parameter."
     else:
-        signature_to_check = sig or student.record_signature
-        if not signature_to_check:
-            is_authentic = False
-            failure_message = "No Ed25519 cryptographic signature provided or recorded for this record."
-        else:
-            is_authentic = verify_signature(student, signature_to_check, session=session)
-            if not is_authentic:
-                failure_message = "The Ed25519 cryptographic signature failed validation. The record content may have been altered or forged."
+        is_authentic = verify_signature(student, sig.strip(), session=session)
+        if not is_authentic:
+            failure_message = "The Ed25519 cryptographic signature failed validation. The record content may have been altered or forged."
 
-        if is_authentic:
+    if is_authentic and student:
+        tier = get_effective_consent_tier(student.consent_level)
+        if tier >= 1:
             institution = session.get(Institution, student.institution_id)
             program = session.get(Program, student.program_id)
-
-    tier = student.consent_level if (student and is_authentic) else 0
+    else:
+        tier = 0
 
     vlog = VerificationLog(
         verifier_id=None,
         apaar_id=student.apaar_id if student else student_id,
-        tier_shown=tier,
+        tier_shown=tier if is_authentic else 0,
         result="VALID" if is_authentic else "TAMPERED",
         timestamp=utc_now(),
     )
@@ -416,9 +460,9 @@ def verify_public_record(
         context={
             "is_authentic": is_authentic,
             "tier": tier,
-            "student": student,
-            "institution": institution,
-            "program": program,
+            "student": student if (is_authentic and tier >= 1) else None,
+            "institution": institution if (is_authentic and tier >= 1) else None,
+            "program": program if (is_authentic and tier >= 1) else None,
             "requested_id": student_id,
             "failure_message": failure_message,
         },
@@ -519,11 +563,26 @@ def student_dashboard(
 @router.post("/student/dashboard/consent")
 def update_student_dashboard_consent(
     request: Request,
-    consent_level: int = Form(...),
+    consent_level: Optional[str] = Form(None),
     user: User = Depends(require_role("STUDENT")),
     session: Session = Depends(get_session),
 ):
     """Update student consent tier directly from the student dashboard."""
+    if consent_level is None or not str(consent_level).strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid consent tier. Allowed tiers are 0 (Authenticity only), 1 (Directory only), or 2 (Full record).",
+        )
+    try:
+        tier_int = int(consent_level)
+        if tier_int not in (0, 1, 2):
+            raise ValueError("Out of range")
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid consent tier. Allowed tiers are 0 (Authenticity only), 1 (Directory only), or 2 (Full record).",
+        )
+
     student = None
     if user.apaar_id:
         student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
@@ -533,18 +592,19 @@ def update_student_dashboard_consent(
     if not student:
         raise HTTPException(status_code=404, detail="Student record not found")
 
-    student.consent_level = consent_level
-    student.consent_timestamp = utc_now()
+    student.consent_level = tier_int
+    student.consent_timestamp = utc_now() if tier_int > 0 else None
+    student.updated_at = utc_now()
+    student.record_signature = sign_record(student, session)
     session.add(student)
 
     log_action(
         session=session,
-        user_id=user.id,
-        username=user.username,
+        user=user,
         action="UPDATE_CONSENT",
-        entity="Student",
-        entity_id=student.id,
-        details=f"Student {student.apaar_id} updated consent to Tier {consent_level} from dashboard",
+        entity="STUDENT",
+        entity_id=str(student.id),
+        details=f"Student {student.apaar_id} updated consent to Tier {tier_int} from dashboard",
     )
     session.commit()
 
@@ -576,10 +636,7 @@ def view_certificate(
     institution = session.get(Institution, student.institution_id)
     program = session.get(Program, student.program_id)
 
-    sig = student.record_signature or sign_record(student, session)
-    if not student.record_signature:
-        session.add(student)
-        session.commit()
+    sig = student.record_signature or ""
 
     base_url = str(request.base_url).rstrip("/")
     verify_url = f"{base_url}/verify/record/{student.student_id}?sig={sig}"

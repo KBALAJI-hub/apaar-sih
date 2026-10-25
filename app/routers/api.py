@@ -131,7 +131,7 @@ class StudentUpdateItem(BaseModel):
     nationality: Optional[str] = Field(None, description="Country of citizenship", examples=["Indian"])
     mode: Optional[str] = Field(None, description="Mode of study", examples=["FULL_TIME"])
     status: Optional[str] = Field(None, description="Enrollment status (ACTIVE, INACTIVE, SUSPENDED, GRADUATED)", examples=["ACTIVE"])
-    consent_level: Optional[int] = Field(None, description="Consent level (0=None, 1=Basic, 2=Full)", examples=[2])
+    consent_level: Optional[int] = Field(None, ge=0, le=2, description="Consent level (0=None, 1=Basic, 2=Full)", examples=[2])
     override_justification: Optional[str] = Field(None, description="Mandatory justification text if target program is at BLOCK capacity", examples=["Special legal order variance"])
 
     model_config = ConfigDict(

@@ -46,15 +46,18 @@
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-6 text-sm">
                 <div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Institution Roll ID</div>
-                    <div class="font-mono font-semibold text-gray-800 mt-0.5">{{ student.student_id if student else requested_id }}</div>
-                </div>
-                <div>
                     <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Verification Status</div>
                     <div class="mt-0.5">
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
                             Tier 0 &bull; Details Withheld
                         </span>
+                    </div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cryptographic Status</div>
+                    <div class="mt-0.5 font-semibold text-emerald-700 flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        Ed25519 Signature Verified
                     </div>
                 </div>
             </div>
@@ -72,23 +75,61 @@
         </div>
 
         {% elif tier == 1 %}
-        <!-- TIER 1: Directory Verification Only (Institution & Program, Name Withheld) -->
+        <!-- TIER 1: Directory Verification Only (Institution & Program, Personal Identifiers Withheld) -->
         <div class="p-6 sm:p-8 space-y-5">
             <div class="p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 font-medium">
-                <strong>Directory Verification (Tier 1):</strong> Affiliated institution and academic program details confirmed. Personal identifiable attributes (name, DOB) are withheld per student consent.
+                <strong>Directory Verification (Tier 1):</strong> Affiliated institution and academic program details confirmed. Personal identifiable attributes (name, student roll ID, DOB) are withheld per student consent.
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-6 text-sm">
                 <div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Institution Roll ID</div>
-                    <div class="font-mono font-semibold text-gray-800 mt-0.5">{{ student.student_id }}</div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">AICTE Affiliated Institution</div>
+                    <div class="font-semibold text-gray-900 mt-0.5">{{ institution.name if institution else 'N/A' }}</div>
+                    <div class="text-xs text-gray-500 font-mono">AIC-ID: {{ institution.aicte_id if institution else '' }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Academic Program</div>
+                    <div class="font-semibold text-gray-900 mt-0.5">{{ program.name if program else 'N/A' }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Admission Year</div>
+                    <div class="font-semibold text-gray-800 mt-0.5">{{ student.admission_year if student else '' }}</div>
                 </div>
                 <div>
                     <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Enrollment Status</div>
                     <div class="mt-0.5">
                         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            {{ student.status }}
+                            {{ student.status if student else '' }}
                         </span>
                     </div>
+                </div>
+            </div>
+
+            <!-- Cryptographic Assurance Footer -->
+            <div class="pt-5 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-gray-500">
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                    <span>Algorithm: <strong class="text-gray-700">Ed25519 (RFC 8032)</strong></span>
+                </div>
+                <a href="/.well-known/aicte-public-key.pem" target="_blank" class="text-indigo-600 hover:text-indigo-800 font-medium underline inline-flex items-center gap-1">
+                    Download AICTE Root Public Key &rarr;
+                </a>
+            </div>
+        </div>
+
+        {% elif tier == 2 %}
+        <!-- TIER 2: Full Credential Verification -->
+        <div class="p-6 sm:p-8 space-y-6">
+            <div class="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-medium">
+                <strong>Full Credential Verification (Tier 2):</strong> Complete academic and identity verification authorized by student consent.
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-6 text-sm">
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Student Name</div>
+                    <div class="font-bold text-gray-900 text-base mt-0.5">{{ student.full_name if student else '' }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Institution Roll ID</div>
+                    <div class="font-mono font-semibold text-gray-800 mt-0.5">{{ student.student_id if student else '' }}</div>
                 </div>
                 <div>
                     <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">AICTE Affiliated Institution</div>
@@ -101,7 +142,15 @@
                 </div>
                 <div>
                     <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Admission Year</div>
-                    <div class="font-semibold text-gray-800 mt-0.5">{{ student.admission_year }}</div>
+                    <div class="font-semibold text-gray-800 mt-0.5">{{ student.admission_year if student else '' }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Enrollment Status</div>
+                    <div class="mt-0.5">
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                            {{ student.status if student else '' }}
+                        </span>
+                    </div>
                 </div>
             </div>
 
@@ -118,52 +167,35 @@
         </div>
 
         {% else %}
-        <!-- TIER 2: Full Credential Verification -->
-        <div class="p-6 sm:p-8 space-y-6">
-            <div class="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-medium">
-                <strong>Full Credential Verification (Tier 2):</strong> Complete academic and identity verification authorized by student consent.
+        <!-- Unknown or malformed tier: fail closed to Tier 0 minimal assurance -->
+        <div class="p-6 sm:p-8 space-y-5">
+            <div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-3.5">
+                <div class="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0 mt-0.5 text-amber-700">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m0 0v2m0-2h2m-2 0H10m10-7V7a4 4 0 00-8 0v4h8z"></path></svg>
+                </div>
+                <div class="space-y-1">
+                    <div class="text-sm font-bold text-amber-900">APAAR valid, student has not consented to share details</div>
+                    <p class="text-xs text-amber-700 leading-relaxed">
+                        The cryptographic signature has been validated against the AICTE Root Public Key. No student personal or academic details are disclosed.
+                    </p>
+                </div>
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-6 text-sm">
                 <div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Student Name</div>
-                    <div class="font-bold text-gray-900 text-base mt-0.5">{{ student.full_name }}</div>
-                </div>
-                <div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Institution Roll ID</div>
-                    <div class="font-mono font-semibold text-gray-800 mt-0.5">{{ student.student_id }}</div>
-                </div>
-                <div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">AICTE Affiliated Institution</div>
-                    <div class="font-semibold text-gray-900 mt-0.5">{{ institution.name if institution else 'N/A' }}</div>
-                    <div class="text-xs text-gray-500 font-mono">AIC-ID: {{ institution.aicte_id if institution else '' }}</div>
-                </div>
-                <div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Academic Program</div>
-                    <div class="font-semibold text-gray-900 mt-0.5">{{ program.name if program else 'N/A' }}</div>
-                </div>
-                <div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Admission Year</div>
-                    <div class="font-semibold text-gray-800 mt-0.5">{{ student.admission_year }}</div>
-                </div>
-                <div>
-                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Enrollment Status</div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Verification Status</div>
                     <div class="mt-0.5">
-                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            {{ student.status }}
+                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                            Tier 0 &bull; Details Withheld
                         </span>
                     </div>
                 </div>
-            </div>
-
-            <!-- Cryptographic Assurance Footer -->
-            <div class="pt-5 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-gray-500">
-                <div class="flex items-center gap-2">
-                    <svg class="w-4 h-4 text-emerald-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
-                    <span>Algorithm: <strong class="text-gray-700">Ed25519 (RFC 8032)</strong></span>
+                <div>
+                    <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Cryptographic Status</div>
+                    <div class="mt-0.5 font-semibold text-emerald-700 flex items-center gap-1.5">
+                        <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        Ed25519 Signature Verified
+                    </div>
                 </div>
-                <a href="/.well-known/aicte-public-key.pem" target="_blank" class="text-indigo-600 hover:text-indigo-800 font-medium underline inline-flex items-center gap-1">
-                    Download AICTE Root Public Key &rarr;
-                </a>
             </div>
         </div>
         {% endif %}
