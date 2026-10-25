@@ -24,10 +24,45 @@ load_dotenv(_root_dir / ".env")
 load_dotenv(_app_dir / ".env")
 load_dotenv()  # Fallback to current working directory
 
-# Resolve database URL from either DATABASE_URL or DB_URL
-DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DB_URL")
-if not DATABASE_URL:
-    DATABASE_URL = "sqlite:///apaar.db"
+# Resolve database URL from either DATABASE_URL or DB_URL, or use disposable test db
+TEST_DB_FILENAME = "test_apaar.db"
+PRIMARY_DB_FILENAME = "apaar.db"
+TEST_DB_PATH = _root_dir / TEST_DB_FILENAME
+PRIMARY_DB_PATH = _root_dir / PRIMARY_DB_FILENAME
+
+import sys
+import re
+import shutil
+
+IS_TESTING = (
+    os.getenv("TESTING", "").lower() in ("1", "true", "yes")
+    or "pytest" in sys.modules
+    or any("unittest" in arg or "test" in Path(arg).name.lower() for arg in sys.argv)
+)
+
+
+def init_test_db(force_refresh: bool = False) -> None:
+    """
+    Initializes a disposable SQLite test database (test_apaar.db).
+    Copies seeded data from apaar.db if available to preserve baseline test fixtures,
+    preventing any automated test suite from modifying primary apaar.db.
+    """
+    if PRIMARY_DB_PATH.exists() and (force_refresh or not TEST_DB_PATH.exists()):
+        try:
+            if "engine" in globals():
+                engine.dispose()
+        except Exception:
+            pass
+        shutil.copyfile(PRIMARY_DB_PATH, TEST_DB_PATH)
+
+
+if IS_TESTING:
+    init_test_db(force_refresh=False)
+    DATABASE_URL = f"sqlite:///{TEST_DB_FILENAME}"
+else:
+    DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DB_URL")
+    if not DATABASE_URL:
+        DATABASE_URL = "sqlite:///apaar.db"
 
 # Normalise legacy postgres:// scheme to postgresql://
 if DATABASE_URL.startswith("postgres://"):
@@ -36,7 +71,6 @@ if DATABASE_URL.startswith("postgres://"):
 IS_POSTGRES = DATABASE_URL.startswith("postgresql")
 IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
-# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Engine Configuration
 # ---------------------------------------------------------------------------
@@ -144,11 +178,38 @@ def get_db_session() -> Session:
     return Session(engine)
 
 
+def redact_credentials(text_or_url: str) -> str:
+    """
+    Remove passwords, usernames, and complete connection URLs from string.
+    Replaces patterns like ://user:pass@host with ://***:***@host or redacts auth tokens.
+    """
+    if not text_or_url:
+        return ""
+    # Mask user:password@ or user@ in connection URI
+    redacted = re.sub(r"://[^@\s]+@", r"://***:***@", str(text_or_url))
+    # Mask password parameters in query string
+    redacted = re.sub(r"(password|pwd|secret)=([^&\s]+)", r"\1=***", redacted, flags=re.IGNORECASE)
+    return redacted
+
+
+def get_sanitized_database_name() -> str:
+    """
+    Extract safe database identifier (e.g. 'apaar.db' or 'postgres')
+    without complete connection URLs, hostnames, usernames, or passwords.
+    """
+    if not engine.url.database:
+        return "apaar.db"
+    return Path(engine.url.database).name
+
+
 def check_db_connection() -> Dict[str, Any]:
     """
     Diagnostic helper to test database connectivity, dialect, and status.
-    Returns explicit diagnostics without silent fallbacks.
+    Strictly redacts usernames, passwords, and sensitive connection details.
+    Never returns a complete database connection URL.
     """
+    safe_db = get_sanitized_database_name()
+
     if IS_POSTGRES:
         try:
             with engine.connect() as conn:
@@ -157,7 +218,7 @@ def check_db_connection() -> Dict[str, Any]:
                     "status": "healthy",
                     "mode": "primary (supabase postgresql)",
                     "dialect": "postgresql",
-                    "database": str(engine.url),
+                    "database": safe_db,
                     "connected": True,
                     "version": version,
                 }
@@ -166,9 +227,9 @@ def check_db_connection() -> Dict[str, Any]:
                 "status": "unhealthy",
                 "mode": "primary (supabase postgresql)",
                 "dialect": "postgresql",
-                "database": str(engine.url),
+                "database": safe_db,
                 "connected": False,
-                "error": str(e),
+                "error": redact_credentials(str(e)),
             }
 
     try:
@@ -178,7 +239,7 @@ def check_db_connection() -> Dict[str, Any]:
                 "status": "healthy",
                 "mode": "sqlite",
                 "dialect": "sqlite",
-                "database": str(engine.url),
+                "database": safe_db,
                 "connected": True,
                 "version": version,
             }
@@ -187,9 +248,9 @@ def check_db_connection() -> Dict[str, Any]:
             "status": "unhealthy",
             "mode": "sqlite",
             "dialect": "sqlite",
-            "database": str(engine.url),
+            "database": safe_db,
             "connected": False,
-            "error": str(e),
+            "error": redact_credentials(str(e)),
         }
 
 

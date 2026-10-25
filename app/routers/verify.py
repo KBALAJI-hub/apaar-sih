@@ -312,12 +312,6 @@ def process_verifier_lookup(
         tier = student.consent_level
         result_status = "NO_CONSENT" if tier == 0 else "VALID"
 
-        # Ensure signature exists for Tier 2 verification
-        if not student.record_signature:
-            student.record_signature = sign_record(student, session)
-            session.add(student)
-            session.commit()
-
     # 3. Log to VerificationLog
     vlog = VerificationLog(
         verifier_id=verifier_id,
@@ -369,7 +363,12 @@ def verify_public_record(
     Public record verification page:
     - Resolves student by institutional roll ID, integer PK, or 12-digit APAAR ID.
     - Recomputes canonical record and checks Ed25519 signature.
-    - Displays 'Authentic record' or 'TAMPERED or not found' with minimal info only.
+    - Strictly enforces student consent tiers (Tier 0, 1, 2):
+        * Tier 0: Valid/authentic cryptographic status only; student details withheld.
+        * Tier 1: Directory verification (institution, program, year, status); personal details withheld.
+        * Tier 2: Full details permitted by student.
+    - Displays 'Authentic record' or 'TAMPERED or not found' with minimal permitted info.
+    - Never generates replacement signatures during verification.
     - Logs audit trail to VerificationLog.
     """
     student = session.exec(select(Student).where(Student.student_id == student_id)).first()
@@ -386,9 +385,6 @@ def verify_public_record(
     if not student:
         failure_message = f"No student record found matching identifier '{student_id}' in the AICTE national registry."
     else:
-        institution = session.get(Institution, student.institution_id)
-        program = session.get(Program, student.program_id)
-
         signature_to_check = sig or student.record_signature
         if not signature_to_check:
             is_authentic = False
@@ -398,10 +394,16 @@ def verify_public_record(
             if not is_authentic:
                 failure_message = "The Ed25519 cryptographic signature failed validation. The record content may have been altered or forged."
 
+        if is_authentic:
+            institution = session.get(Institution, student.institution_id)
+            program = session.get(Program, student.program_id)
+
+    tier = student.consent_level if (student and is_authentic) else 0
+
     vlog = VerificationLog(
         verifier_id=None,
         apaar_id=student.apaar_id if student else student_id,
-        tier_shown=1 if is_authentic else 0,
+        tier_shown=tier,
         result="VALID" if is_authentic else "TAMPERED",
         timestamp=utc_now(),
     )
@@ -413,6 +415,7 @@ def verify_public_record(
         name="verify_record.html",
         context={
             "is_authentic": is_authentic,
+            "tier": tier,
             "student": student,
             "institution": institution,
             "program": program,
@@ -428,18 +431,14 @@ def get_student_qr_code(
     request: Request,
     session: Session = Depends(get_session),
 ):
-    """Generate and return PNG QR code linking to student's verification page."""
+    """Generate and return PNG QR code linking to student's verification page without regenerating signatures."""
     student = session.exec(select(Student).where(Student.student_id == student_id)).first()
     if not student and student_id.isdigit():
         student = session.get(Student, int(student_id))
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    sig = student.record_signature or sign_record(student, session)
-    if not student.record_signature:
-        session.add(student)
-        session.commit()
-
+    sig = student.record_signature or ""
     base_url = str(request.base_url).rstrip("/")
     verification_url = f"{base_url}/verify/record/{student.student_id}?sig={sig}"
     qr_png = make_qr_png(verification_url)

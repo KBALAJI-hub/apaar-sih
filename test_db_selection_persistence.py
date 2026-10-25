@@ -231,6 +231,41 @@ class TestDatabaseSelectionAndPersistence(unittest.TestCase):
                 session.delete(test_prog)
                 session.commit()
 
+    def test_08_database_diagnostics_contain_no_credentials(self):
+        """Confirm database diagnostics and /health endpoint never expose credentials or full URLs."""
+        from app.database import redact_credentials, get_sanitized_database_name
+
+        # 1. Check /health endpoint response
+        resp = client.get("/health")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        db_info = data.get("database", {})
+
+        # Must not contain connection URL schemes, credentials, or sensitive keywords
+        raw_resp = resp.text
+        self.assertNotIn("postgresql://", raw_resp)
+        self.assertNotIn("postgres://", raw_resp)
+        self.assertNotIn("sqlite:///", raw_resp)
+        self.assertNotIn("@", raw_resp)
+        self.assertNotIn("password", raw_resp.lower())
+
+        # Preserves useful diagnostic info
+        self.assertEqual(db_info.get("status"), "healthy")
+        self.assertEqual(db_info.get("dialect"), "sqlite")
+        self.assertTrue(db_info.get("connected"))
+        self.assertIsNotNone(db_info.get("version"))
+        self.assertIn("apaar.db", db_info.get("database", ""))
+
+        # 2. Test redact_credentials function directly on sample connection strings
+        sensitive_url = "postgresql://my_db_user:SuperSecretPassword123@aws-pooler.supabase.com:6543/production_apaar_db?sslmode=require"
+        redacted = redact_credentials(sensitive_url)
+        self.assertNotIn("my_db_user", redacted)
+        self.assertNotIn("SuperSecretPassword123", redacted)
+        self.assertIn("://***:***@", redacted)
+
+        # 3. Test safe database name extractor
+        self.assertIn("apaar.db", get_sanitized_database_name())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

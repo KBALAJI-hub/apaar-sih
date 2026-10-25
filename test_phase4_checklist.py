@@ -52,6 +52,10 @@ def run_tests():
     print("  APAAR VERIFY - PHASE 4 INTEGRATION TEST CHECKLIST (16 STEPS)")
     print("=" * 70)
     
+    # Refresh disposable test database from apaar.db to guarantee clean test state
+    from app.database import init_test_db
+    init_test_db(force_refresh=True)
+
     results = {}
     
     # ---------------------------------------------------------
