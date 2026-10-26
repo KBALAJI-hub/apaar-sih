@@ -35,9 +35,12 @@ import re
 import shutil
 
 IS_TESTING = (
-    os.getenv("TESTING", "").lower() in ("1", "true", "yes")
-    or "pytest" in sys.modules
-    or any("unittest" in arg or "test" in Path(arg).name.lower() for arg in sys.argv)
+    (
+        os.getenv("TESTING", "").lower() in ("1", "true", "yes")
+        or "pytest" in sys.modules
+        or any("unittest" in arg or "test" in Path(arg).name.lower() for arg in sys.argv)
+    )
+    and not os.getenv("ALLOW_POSTGRES_TEST", "").lower() in ("1", "true", "yes")
 )
 
 
@@ -60,9 +63,22 @@ if IS_TESTING:
     init_test_db(force_refresh=False)
     DATABASE_URL = f"sqlite:///{TEST_DB_FILENAME}"
 else:
-    DATABASE_URL = os.getenv("DATABASE_URL") or os.getenv("DB_URL")
-    if not DATABASE_URL:
-        DATABASE_URL = "sqlite:///apaar.db"
+    # Explicit environment-controlled selection:
+    # Default is SQLite (apaar.db). PostgreSQL / Supabase is activated ONLY when
+    # DB_TARGET or USE_SUPABASE is explicitly set to point to postgresql/supabase.
+    db_target = os.getenv("DB_TARGET", "sqlite").lower()
+    use_supabase = os.getenv("USE_SUPABASE", "").lower() in ("1", "true", "yes")
+
+    if db_target in ("supabase", "postgres", "postgresql") or use_supabase:
+        DATABASE_URL = os.getenv("SUPABASE_DATABASE_URL") or os.getenv("POSTGRES_URL") or os.getenv("DATABASE_URL")
+        if not DATABASE_URL or not any(DATABASE_URL.startswith(p) for p in ("postgresql://", "postgres://", "postgresql+")):
+            raise RuntimeError(
+                "PostgreSQL / Supabase selected via DB_TARGET, but no valid PostgreSQL connection URL found "
+                "in SUPABASE_DATABASE_URL, POSTGRES_URL, or DATABASE_URL."
+            )
+    else:
+        # Default mode: SQLite apaar.db
+        DATABASE_URL = os.getenv("LOCAL_DATABASE_URL") or "sqlite:///apaar.db"
 
 # Normalise legacy postgres:// scheme to postgresql://
 if DATABASE_URL.startswith("postgres://"):
@@ -88,6 +104,11 @@ else:
     # - pool_pre_ping=True: validates connections before query execution
     # - pool_recycle=300: prevents stale connections dropped by pooler (5 min timeout)
     # - pool_size & max_overflow: handles concurrent requests smoothly
+    # - prepare_threshold=None: disables client-side prepared statements on transaction poolers (:6543)
+    pg_connect_args = {}
+    if ":6543" in DATABASE_URL:
+        pg_connect_args["prepare_threshold"] = None
+
     engine = create_engine(
         DATABASE_URL,
         echo=False,
@@ -95,6 +116,7 @@ else:
         pool_recycle=300,
         pool_size=10,
         max_overflow=20,
+        connect_args=pg_connect_args,
     )
     fallback_engine = engine
 
@@ -128,6 +150,9 @@ DEFAULT_SYSTEM_SETTINGS = {
 
 def init_default_settings(session: Session) -> None:
     """Ensure baseline system threshold settings exist in the database."""
+    if IS_POSTGRES:
+        # CRITICAL SAFETY GUARD: Do not mutate settings on remote PostgreSQL / Supabase
+        return
     try:
         existing_keys = {
             s.key for s in session.exec(select(Setting)).all()
@@ -146,6 +171,9 @@ def init_default_settings(session: Session) -> None:
 
 def create_db_and_tables():
     """Create all registered SQLModel tables and ensure baseline settings."""
+    if IS_POSTGRES:
+        # CRITICAL SAFETY GUARD: Never run DDL create_all or mutate settings on Supabase
+        return
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         init_default_settings(session)

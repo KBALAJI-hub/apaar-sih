@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 
 from app.anomaly import compliance_score
 from app.audit import log_action, verify_chain
@@ -232,74 +232,212 @@ def verify_audit_chain(
     return {"ok": ok, "broken_id": broken_id}
 
 
-@router.get("/reports/compliance-summary", response_class=HTMLResponse)
-def compliance_summary(
+def _render_compliance_summary(
     request: Request,
-    user: User = Depends(require_role("AICTE_ADMIN")),
-    session: Session = Depends(get_session),
-):
-    institutions = session.exec(select(Institution).order_by(Institution.state, Institution.name)).all()
-    rows = []
-    for institution in institutions:
-        programs = session.exec(
-            select(Program).where(Program.institution_id == institution.id)
+    session: Session,
+    user: User,
+    search: Optional[str] = None,
+    state: Optional[str] = None,
+    institution_type: Optional[str] = None,
+    limit: int = 200,
+) -> Response:
+    """
+    High-performance compliance summary supporting both small local datasets and
+    large remote PostgreSQL datasets (13,000+ institutions).
+    Uses batch aggregate queries instead of per-institution N+1 query loops.
+    """
+    clean_search = str(search).strip() if search and isinstance(search, str) and search.strip() else None
+    clean_state = str(state).strip() if state and isinstance(state, str) and state.strip() else None
+    clean_type = str(institution_type).strip() if institution_type and isinstance(institution_type, str) and institution_type.strip() else None
+    try:
+        clean_limit = int(limit) if limit and isinstance(limit, (int, str)) and str(limit).isdigit() else 200
+    except (ValueError, TypeError):
+        clean_limit = 200
+
+    # 1. Detect active institutions (institutions with enrolled students, open flags, or anomaly alerts)
+    active_stu_ids = set(session.exec(select(Student.institution_id).distinct()).all())
+    active_flag_ids = set(session.exec(
+        select(ValidationFlag.institution_id).where(ValidationFlag.status == "OPEN").distinct()
+    ).all())
+    active_alert_ids = set(session.exec(select(AnomalyAlert.institution_id).distinct()).all())
+    all_active_ids = active_stu_ids | active_flag_ids | active_alert_ids
+
+    # 2. Build target institutions list
+    has_filter = bool(clean_search or clean_state or clean_type)
+
+    if has_filter:
+        query = select(Institution.id, Institution.name, Institution.aicte_id, Institution.state, Institution.type)
+        if clean_state:
+            query = query.where(Institution.state == clean_state)
+        if clean_type:
+            query = query.where(Institution.type == clean_type)
+        if clean_search:
+            s = f"%{clean_search}%"
+            query = query.where(
+                (Institution.name.ilike(s)) | (Institution.aicte_id.ilike(s)) | (Institution.state.ilike(s))
+            )
+        target_insts = session.exec(query.order_by(Institution.state, Institution.name).limit(clean_limit)).all()
+    else:
+        # Default view: prioritize all active institutions with demo data first, then other institutions up to limit
+        active_insts = session.exec(
+            select(Institution.id, Institution.name, Institution.aicte_id, Institution.state, Institution.type)
+            .where(Institution.id.in_(all_active_ids))
+            .order_by(Institution.id)
         ).all()
-        program_ids = [program.id for program in programs]
-        enrolment = len(
-            session.exec(
-                select(Student).where(
-                    Student.institution_id == institution.id,
-                    Student.program_id.in_(program_ids or {-1}),
-                    Student.status == "ACTIVE",
-                )
+        other_limit = max(0, clean_limit - len(active_insts))
+        other_insts = []
+        if other_limit > 0:
+            other_insts = session.exec(
+                select(Institution.id, Institution.name, Institution.aicte_id, Institution.state, Institution.type)
+                .where(~Institution.id.in_(all_active_ids))
+                .order_by(Institution.state, Institution.name)
+                .limit(other_limit)
             ).all()
+        target_insts = active_insts + other_insts
+
+    target_ids = [inst[0] for inst in target_insts]
+
+    if not target_ids:
+        return templates.TemplateResponse(
+            request=request,
+            name="compliance_summary.html",
+            context={
+                "rows": [],
+                "role": user.role,
+                "user": user,
+                "search": clean_search or "",
+                "selected_state": clean_state or "",
+                "selected_type": clean_type or "",
+                "states": [],
+                "types": [],
+                "total_matched": 0,
+            },
         )
-        intake = sum(max(0, int(program.approved_intake or 0)) for program in programs)
-        open_flags = len(
-            session.exec(
-                select(ValidationFlag).where(
-                    ValidationFlag.institution_id == institution.id,
-                    ValidationFlag.status == "OPEN",
-                )
-            ).all()
-        )
+
+    # 3. Batch query approved intake sum for target institutions (1 query)
+    intake_counts = dict(session.exec(
+        select(Program.institution_id, func.sum(Program.approved_intake))
+        .where(Program.institution_id.in_(target_ids))
+        .group_by(Program.institution_id)
+    ).all())
+
+    # 4. Batch query active student count for target institutions (1 query)
+    enrolment_counts = dict(session.exec(
+        select(Student.institution_id, func.count(Student.id))
+        .where(Student.institution_id.in_(target_ids), Student.status == "ACTIVE")
+        .group_by(Student.institution_id)
+    ).all())
+
+    # 5. Batch query open validation flags grouped by severity for target institutions (1 query)
+    flag_rows = session.exec(
+        select(ValidationFlag.institution_id, ValidationFlag.severity, func.count(ValidationFlag.id))
+        .where(ValidationFlag.institution_id.in_(target_ids), ValidationFlag.status == "OPEN")
+        .group_by(ValidationFlag.institution_id, ValidationFlag.severity)
+    ).all()
+    flags_by_inst = defaultdict(lambda: {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "TOTAL": 0})
+    for i_id, sev, cnt in flag_rows:
+        flags_by_inst[i_id][sev] += cnt
+        flags_by_inst[i_id]["TOTAL"] += cnt
+
+    # 6. Batch query anomaly alerts count for target institutions (1 query)
+    anomaly_counts = dict(session.exec(
+        select(AnomalyAlert.institution_id, func.count(AnomalyAlert.id))
+        .where(AnomalyAlert.institution_id.in_(target_ids))
+        .group_by(AnomalyAlert.institution_id)
+    ).all())
+
+    # 7. Assemble rows with O(1) in-memory compliance score calculation
+    rows = []
+    for inst_id, name, aicte_id, inst_state, inst_type in target_insts:
+        enrolment = enrolment_counts.get(inst_id, 0)
+        intake = int(intake_counts.get(inst_id, 0) or 0)
+        fill_ratio = round(enrolment / intake, 3) if intake > 0 else 0.0
+        inst_flags = flags_by_inst[inst_id]
+        anomaly_count = anomaly_counts.get(inst_id, 0)
+
+        # In-memory compliance scoring (matches compliance_score logic identically)
+        penalty = min(inst_flags["HIGH"] * 5.0 + inst_flags["MEDIUM"] * 2.0 + inst_flags["LOW"] * 0.5, 70.0)
+        score = max(0, min(100, int(round(100.0 - penalty - min(anomaly_count * 5.0, 25.0)))))
+
         rows.append({
-            "id": institution.id,
-            "name": institution.name,
-            "aicte_id": institution.aicte_id,
-            "state": institution.state,
-            "type": institution.type,
+            "id": inst_id,
+            "name": name,
+            "aicte_id": aicte_id,
+            "state": inst_state,
+            "type": inst_type,
             "enrolment": enrolment,
             "intake": intake,
-            "fill_ratio": round(enrolment / intake, 3) if intake else 0.0,
-            "open_flags": open_flags,
-            "compliance_score": compliance_score(institution.id, session),
+            "fill_ratio": fill_ratio,
+            "open_flags": inst_flags["TOTAL"],
+            "compliance_score": score,
         })
+
+    all_states = [
+        "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar",
+        "Chandigarh", "Chhattisgarh", "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh",
+        "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra",
+        "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab",
+        "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh",
+        "Uttarakhand", "West Bengal"
+    ]
+    all_types = ["Government", "Private", "Aided", "University", "Autonomous"]
+
     return templates.TemplateResponse(
         request=request,
         name="compliance_summary.html",
-        context={"rows": rows, "role": user.role, "user": user},
+        context={
+            "rows": rows,
+            "role": user.role,
+            "user": user,
+            "search": clean_search or "",
+            "selected_state": clean_state or "",
+            "selected_type": clean_type or "",
+            "states": all_states,
+            "types": all_types,
+            "total_matched": len(rows),
+        },
     )
+
+
+@router.get("/reports/compliance-summary", response_class=HTMLResponse)
+def compliance_summary(
+    request: Request,
+    search: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    institution_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=10, le=2000),
+    user: User = Depends(require_role("AICTE_ADMIN")),
+    session: Session = Depends(get_session),
+):
+    return _render_compliance_summary(request, session, user, search, state, institution_type, limit)
 
 
 @router.get("/reports", response_class=HTMLResponse)
 def aicte_reports_view(
     request: Request,
+    search: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    institution_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=10, le=2000),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
     """Render the AICTE compliance and reports overview."""
-    return compliance_summary(request=request, user=user, session=session)
+    return _render_compliance_summary(request, session, user, search, state, institution_type, limit)
 
 
 @router.get("/institutions", response_class=HTMLResponse)
 def aicte_institutions_view(
     request: Request,
+    search: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    institution_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=10, le=2000),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
     """Render AICTE institutions directory with compliance metrics and drill-down links."""
-    return compliance_summary(request=request, user=user, session=session)
+    return _render_compliance_summary(request, session, user, search, state, institution_type, limit)
 
 
 @router.get("/institutions/{institution_id}", response_class=HTMLResponse)
@@ -478,17 +616,14 @@ def reset_demo(
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
-    from seed import seed_database
-
-    seed_database()
-    log_action(
-        session=session,
-        user=user,
-        action="RESET_DEMO",
-        entity="SYSTEM",
-        details="Demo database reset and deterministically reseeded.",
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "In-place database reset is disabled to protect canonical database integrity. "
+            "To restore the canonical database, stop the server and run: "
+            "python scripts/setup_dev_database.py --force"
+        ),
     )
-    return RedirectResponse(url="/aicte/dashboard", status_code=303)
 
 
 @api_router.get("/summary")

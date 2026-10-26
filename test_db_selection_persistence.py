@@ -165,18 +165,18 @@ class TestDatabaseSelectionAndPersistence(unittest.TestCase):
         """Explicitly assert ALLOW, WARN, and BLOCK decisions from the intake check engine."""
         from app.validation import intake_check
 
-        # 1. ALLOW assertion: Program 1 (fill ratio well under 90%)
-        resp_allow = client.get("/api/v1/programs/1/intake-check")
+        # 1. ALLOW assertion: Program 3 (fill ratio well under 90%: 20/30 = 66.7%)
+        resp_allow = client.get("/api/v1/programs/3/intake-check")
         self.assertEqual(resp_allow.status_code, 200)
         data_allow = resp_allow.json()
-        self.assertEqual(data_allow.get("decision"), "ALLOW", f"Expected ALLOW decision for Program 1, got {data_allow}")
+        self.assertEqual(data_allow.get("decision"), "ALLOW", f"Expected ALLOW decision for Program 3, got {data_allow}")
         self.assertLess(data_allow.get("fill_ratio"), 0.90)
 
-        # 2. BLOCK assertion: Program 12 (exceeded approved intake)
-        resp_block = client.get("/api/v1/programs/12/intake-check")
+        # 2. BLOCK assertion: Program 1 (at or exceeding approved intake: 24/24 = 100%)
+        resp_block = client.get("/api/v1/programs/1/intake-check")
         self.assertEqual(resp_block.status_code, 200)
         data_block = resp_block.json()
-        self.assertEqual(data_block.get("decision"), "BLOCK", f"Expected BLOCK decision for Program 12, got {data_block}")
+        self.assertEqual(data_block.get("decision"), "BLOCK", f"Expected BLOCK decision for Program 1, got {data_block}")
         self.assertGreaterEqual(data_block.get("fill_ratio"), 1.0)
 
         # 3. WARN assertion: Program with fill ratio between 90% and 100%

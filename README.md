@@ -90,8 +90,8 @@ python -m venv venv
 # 3. Install required dependencies
 pip install -r requirements.txt
 
-# 4. Initialize and seed deterministic demo database
-python seed.py
+# 4. Install the canonical database snapshot (Offline, 2 seconds)
+python scripts/setup_dev_database.py
 
 # 5. Launch the local development server
 uvicorn app.main:app --reload
@@ -102,20 +102,20 @@ Once started, the application will be live at: **http://127.0.0.1:8000**
 
 ## 5. Demo Credentials
 
-The database seeder (`seed.py`) populates deterministic credentials for testing all 4 system roles:
+The canonical database (`apaar.db`) is derived directly from the authoritative national AICTE dataset (13,089 institutions, 58,297 programs, 120 signed students):
 
 | Role | Username | Password | Purpose / Organization |
 |---|---|---|---|
 | **AICTE_ADMIN** | `aicte_admin` | `Admin@123` | Central Regulator Dashboard, Duplicates Panel, Anomaly Alerts |
-| **INSTITUTION** | `inst1` | `Inst@123` | Delhi Technological Institute (Engineering — Normal Intake) |
-| **INSTITUTION** | `inst2` | `Inst@123` | Maharashtra Institute of Technology (Management — YoY Surge) |
-| **INSTITUTION** | `inst3` | `Inst@123` | Karnataka College of Pharmacy (Exceeded Intake — 135% Fill) |
-| **INSTITUTION** | `inst4` | `Inst@123` | TN Institute of Engineering (40% NRI Quota Outlier) |
-| **INSTITUTION** | `inst5` | `Inst@123` | Gujarat Polytechnic Institute (Polytechnic) |
-| **VERIFIER** | `employer1` | `Verify@123` | TCS Campus Recruiter / Third-Party Background Verification |
-| **STUDENT** | `student1`..`student5` | `Student@123` | Student Consent Portal (or simulated OTP: `123456`) |
+| **INSTITUTION** | `inst1` *(or `registrar_poly`)* | `Inst@123` | Government Polytechnic Diglipur (A&N Islands — Intake: 120) |
+| **INSTITUTION** | `registrar_ambr` | `Inst@123` | Dr. B.R. Ambedkar Institute of Technology |
+| **INSTITUTION** | `registrar_ancol`| `Inst@123` | Andaman Nicobar College (ANCOL) |
+| **INSTITUTION** | `registrar_jnrm` | `Inst@123` | Jawaharlal Nehru Rajkeeya Mahavidyalaya |
+| **INSTITUTION** | `registrar_cipet`| `Inst@123` | Central Institute of Petrochemicals Engineering |
+| **VERIFIER** | `employer1` *(or `recruiter_tcs`)* | `Verify@123` | TCS Campus Recruiter / Third-Party Background Verification |
+| **STUDENT** | `student1` *(or `student_demo1`)* | `Student@123` | Student Consent Portal (or simulated OTP: `123456`) |
 
-*API Key for Institution 1 REST endpoints:* `api-key-inst1-secret` (pass via `X-API-Key` header)
+*Maintainer Snapshot Refresh:* Maintainers with Supabase access can refresh the canonical snapshot via `python scripts/sync_supabase_to_sqlite.py`.
 
 ---
 

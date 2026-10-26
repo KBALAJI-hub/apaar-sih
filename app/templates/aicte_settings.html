@@ -49,13 +49,13 @@
     </button>
   </form>
 
-  <form method="post" action="/aicte/reset-demo" class="mt-8 rounded-xl border border-red-200 bg-red-50 p-5"
-        onsubmit="return confirm('Reset all demo data? This replaces the current database with the deterministic demo seed.');">
-    <h2 class="font-semibold text-red-900">Reset demo data</h2>
-    <p class="my-2 text-sm text-red-800">This replaces current demo records with a fresh seeded dataset.</p>
-    <button type="submit" class="rounded bg-red-700 px-4 py-2 font-semibold text-white hover:bg-red-800">
-      Reset demo
-    </button>
-  </form>
+  <div class="mt-8 rounded-xl border border-amber-200 bg-amber-50 p-5">
+    <h2 class="font-semibold text-amber-900">Database Restoration & Snapshot Management</h2>
+    <p class="my-2 text-sm text-amber-800">
+      To protect canonical database integrity, in-place resets from the web interface are disabled.
+      To restore the canonical database baseline, stop the local server and run:
+    </p>
+    <code class="block rounded bg-amber-100 p-2 font-mono text-xs text-amber-900">python scripts/setup_dev_database.py --force</code>
+  </div>
 </div>
 {% endblock %}
