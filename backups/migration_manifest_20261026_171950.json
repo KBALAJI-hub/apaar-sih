@@ -1,0 +1,38 @@
+{
+  "timestamp": "20261026_171950",
+  "status": "VALIDATED_AND_PACKAGED",
+  "source": "postgresql://***:***@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres",
+  "uncompressed_sqlite_sha256": "70206de0f37ac755091a243a3f063670016a024a1db4b993fc251a8a725daf35",
+  "compressed_snapshot_sha256": "ae3ccb519a7a317d4027956388add2e20b238e4ce3fc16f2ba5434f69ea57580",
+  "snapshot_file": "apaar_canonical_v1.db.gz",
+  "source_row_counts": {
+    "setting": 9,
+    "apaarregistry": 150,
+    "institution": 13089,
+    "program": 58297,
+    "user": 15,
+    "student": 120,
+    "validationflag": 25,
+    "anomalyalert": 9,
+    "verificationlog": 30,
+    "auditlog": 52
+  },
+  "destination_row_counts": {
+    "setting": 9,
+    "apaarregistry": 150,
+    "institution": 13089,
+    "program": 58297,
+    "user": 15,
+    "student": 120,
+    "validationflag": 25,
+    "anomalyalert": 9,
+    "verificationlog": 30,
+    "auditlog": 52
+  },
+  "validation_results": {
+    "foreign_keys": "PASS (0 violations)",
+    "audit_chain": "PASS (intact)",
+    "ed25519_signatures": "PASS (120/120 verified)",
+    "sqlite_sequence": "PASS (all counters synchronized)"
+  }
+}

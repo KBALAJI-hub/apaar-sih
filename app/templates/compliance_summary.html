@@ -36,8 +36,45 @@
   </div>
 </div>
 
+<!-- Search & Filter Controls -->
+<div class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6 print:hidden">
+  <form method="get" class="flex flex-wrap items-center gap-3">
+    <div class="flex-1 min-w-[240px]">
+      <input type="text" id="liveSearchInput" name="search" value="{{ search }}" placeholder="Filter by institution name, AICTE ID, or state..."
+             class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+    </div>
+    <div class="w-48">
+      <select name="state" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+        <option value="">All States (National)</option>
+        {% for s in states %}
+        <option value="{{ s }}" {% if selected_state == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="w-36">
+      <select name="institution_type" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+        <option value="">All Types</option>
+        {% for t in types %}
+        <option value="{{ t }}" {% if selected_type == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="rounded-lg bg-indigo-600 hover:bg-indigo-700 px-4 py-2 font-semibold text-white text-sm shadow-sm transition">
+      Filter
+    </button>
+    {% if search or selected_state or selected_type %}
+    <a href="/aicte/institutions" class="rounded-lg bg-gray-100 hover:bg-gray-200 px-3 py-2 text-sm text-gray-700 transition">
+      Clear
+    </a>
+    {% endif %}
+    <div class="ml-auto text-xs text-slate-500 font-medium">
+      Showing <span id="displayedCount" class="font-bold text-slate-800">{{ rows|length }}</span> institutions
+    </div>
+  </form>
+</div>
+
 <div class="overflow-x-auto rounded-xl bg-white p-4 shadow">
-  <table class="w-full text-left text-sm">
+  <table id="institutionsTable" class="w-full text-left text-sm">
     <thead>
       <tr class="border-b text-slate-600">
         <th class="p-2">Institution</th>
@@ -77,6 +114,30 @@
   </table>
 </div>
 
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const input = document.getElementById("liveSearchInput");
+  const table = document.getElementById("institutionsTable");
+  const countEl = document.getElementById("displayedCount");
+  if (!input || !table) return;
+
+  input.addEventListener("input", function () {
+    const term = input.value.toLowerCase().trim();
+    const rows = table.querySelectorAll("tbody tr");
+    let visible = 0;
+    rows.forEach(row => {
+      const text = row.innerText.toLowerCase();
+      if (!term || text.includes(term)) {
+        row.style.display = "";
+        visible++;
+      } else {
+        row.style.display = "none";
+      }
+    });
+    if (countEl) countEl.innerText = visible;
+  });
+});
+</script>
 <style>
 @media print {
   nav, footer { display: none !important; }

@@ -59,20 +59,20 @@ def run_tests():
     results = {}
     
     # ---------------------------------------------------------
-    # STEP 1: Login as inst3 -> Dashboard shows intake exceeded
+    # STEP 1: Login as institution registrar -> Dashboard shows intake exceeded
     # ---------------------------------------------------------
-    print("\n[Step 1] Login as inst3 and check dashboard for exceeded intake...")
-    resp_login = client.post("/login", data={"username": "inst3", "password": "Inst@123"}, follow_redirects=False)
+    print("\n[Step 1] Login as inst1 (or registrar) and check dashboard for exceeded intake...")
+    resp_login = client.post("/login", data={"username": "inst1", "password": "Inst@123"}, follow_redirects=False)
     cookie = resp_login.cookies.get("access_token")
     if not cookie:
-        print("FAIL: Could not obtain auth cookie for inst3")
+        print("FAIL: Could not obtain auth cookie for inst1")
         results[1] = False
     else:
-        inst3_client = TestClient(app, cookies={"access_token": cookie}, raise_server_exceptions=False)
-        resp_dash = inst3_client.get("/institution/dashboard")
+        inst_client = TestClient(app, cookies={"access_token": cookie}, raise_server_exceptions=False)
+        resp_dash = inst_client.get("/institution/dashboard")
         has_intake_warning = (
             resp_dash.status_code == 200 and
-            ("Exceeded" in resp_dash.text or "exceeded" in resp_dash.text or "text-red" in resp_dash.text or "bg-red" in resp_dash.text or "135" in resp_dash.text)
+            ("Exceeded" in resp_dash.text or "exceeded" in resp_dash.text or "text-red" in resp_dash.text or "bg-red" in resp_dash.text or "104" in resp_dash.text)
         )
         print(f"  Status: {resp_dash.status_code}, Found intake warning indicator: {has_intake_warning}")
         results[1] = has_intake_warning
@@ -114,19 +114,19 @@ def run_tests():
         inst = s.exec(select(Institution)).first()
         inst_id = inst.id if inst else 1
         
-        # 1. Verify ALLOW on Program 1 (standard low-ratio program)
-        resp_allow = client.get("/api/v1/programs/1/intake-check")
+        # 1. Verify ALLOW on Program 3 (standard low-ratio program: 20/30 = 66.7%)
+        resp_allow = client.get("/api/v1/programs/3/intake-check")
         data_allow = resp_allow.json() if resp_allow.status_code == 200 else {}
         decision_allow = data_allow.get("decision")
         is_allow = (resp_allow.status_code == 200 and decision_allow == "ALLOW")
-        print(f"  [ALLOW] Program 1: Status={resp_allow.status_code}, Decision={decision_allow}, Fill={data_allow.get('fill_ratio')}")
+        print(f"  [ALLOW] Program 3: Status={resp_allow.status_code}, Decision={decision_allow}, Fill={data_allow.get('fill_ratio')}")
 
-        # 2. Verify BLOCK on Program 12 (exceeded intake)
-        resp_block = client.get("/api/v1/programs/12/intake-check")
+        # 2. Verify BLOCK on Program 1 (at or exceeded intake: 24/24 = 100%)
+        resp_block = client.get("/api/v1/programs/1/intake-check")
         data_block = resp_block.json() if resp_block.status_code == 200 else {}
         decision_block = data_block.get("decision")
         is_block = (resp_block.status_code == 200 and decision_block == "BLOCK")
-        print(f"  [BLOCK] Program 12: Status={resp_block.status_code}, Decision={decision_block}, Fill={data_block.get('fill_ratio')}")
+        print(f"  [BLOCK] Program 1: Status={resp_block.status_code}, Decision={decision_block}, Fill={data_block.get('fill_ratio')}")
 
         # 3. Verify WARN on isolated program with 90% intake (near full)
         temp_prog = Program(
@@ -188,12 +188,23 @@ def run_tests():
     with Session(engine) as s:
         r4_flag = s.exec(select(ValidationFlag).where(ValidationFlag.rule_code == "R4")).first()
         if not r4_flag:
-            insts = s.exec(select(Student.institution_id).distinct()).all()
-            for iid in insts:
-                if iid:
-                    run_full_validation(iid, s)
+            st = s.exec(select(Student)).first()
+            dup = Student(
+                apaar_id=st.apaar_id,
+                institution_id=st.institution_id,
+                program_id=st.program_id,
+                student_id="DUP-TEST-01",
+                full_name=st.full_name,
+                dob=st.dob,
+                gender=st.gender,
+            )
+            s.add(dup)
+            s.commit()
+            run_full_validation(st.institution_id, s)
             s.commit()
             r4_flag = s.exec(select(ValidationFlag).where(ValidationFlag.rule_code == "R4")).first()
+            s.delete(dup)
+            s.commit()
         print(f"  Planted or generated R4 flag found in DB: {r4_flag is not None}")
         if r4_flag:
             print(f"  Flag details: Rule={r4_flag.rule_code}, Severity={r4_flag.severity}, Message={r4_flag.message}")
@@ -258,7 +269,9 @@ def run_tests():
     verifier_client = TestClient(app, cookies={"access_token": verifier_cookie}, raise_server_exceptions=False)
     
     with Session(engine) as s:
-        tier2_student = s.exec(select(Student).where(Student.consent_level == 2)).first()
+        tier2_student = s.exec(
+            select(Student).where(Student.consent_level == 2, Student.apaar_id != "100000000010")
+        ).first()
     
     if tier2_student:
         resp_v_t2 = verifier_client.post("/verify", data={"apaar_id": tier2_student.apaar_id})
