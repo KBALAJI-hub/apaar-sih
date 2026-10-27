@@ -236,16 +236,22 @@ def run_anomaly_detection(session: Session) -> List[AnomalyAlert]:
     return alerts
 
 
-def compliance_score(institution_id: int, session: Session) -> int:
+def compliance_score(
+    institution_id: int,
+    session: Session,
+    flags: Optional[List[ValidationFlag]] = None,
+    alerts: Optional[List[AnomalyAlert]] = None,
+) -> int:
     """Return an integer compliance score from 0 to 100 for an institution."""
     score = 100
 
-    flags = session.exec(
-        select(ValidationFlag).where(
-            ValidationFlag.institution_id == institution_id,
-            ValidationFlag.status == "OPEN",
-        )
-    ).all()
+    if flags is None:
+        flags = session.exec(
+            select(ValidationFlag).where(
+                ValidationFlag.institution_id == institution_id,
+                ValidationFlag.status == "OPEN",
+            )
+        ).all()
 
     penalty = 0.0
     for flag in flags:
@@ -258,9 +264,10 @@ def compliance_score(institution_id: int, session: Session) -> int:
     penalty = min(penalty, 70)
     score -= penalty
 
-    anomaly_alerts = session.exec(
-        select(AnomalyAlert).where(AnomalyAlert.institution_id == institution_id)
-    ).all()
-    score -= min(len(anomaly_alerts) * 5, 25)
+    if alerts is None:
+        alerts = session.exec(
+            select(AnomalyAlert).where(AnomalyAlert.institution_id == institution_id)
+        ).all()
+    score -= min(len(alerts) * 5, 25)
 
     return max(0, min(100, int(score)))

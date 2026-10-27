@@ -239,63 +239,61 @@ def _render_compliance_summary(
     search: Optional[str] = None,
     state: Optional[str] = None,
     institution_type: Optional[str] = None,
-    limit: int = 200,
+    page: int = 1,
+    page_size: int = 50,
 ) -> Response:
     """
     High-performance compliance summary supporting both small local datasets and
     large remote PostgreSQL datasets (13,000+ institutions).
-    Uses batch aggregate queries instead of per-institution N+1 query loops.
+    Uses SQL-based pagination and batch aggregate queries instead of full-table scans.
     """
     clean_search = str(search).strip() if search and isinstance(search, str) and search.strip() else None
     clean_state = str(state).strip() if state and isinstance(state, str) and state.strip() else None
     clean_type = str(institution_type).strip() if institution_type and isinstance(institution_type, str) and institution_type.strip() else None
     try:
-        clean_limit = int(limit) if limit and isinstance(limit, (int, str)) and str(limit).isdigit() else 200
+        clean_page_size = min(max(10, int(page_size)), 200)
     except (ValueError, TypeError):
-        clean_limit = 200
+        clean_page_size = 50
+    try:
+        clean_page = max(1, int(page))
+    except (ValueError, TypeError):
+        clean_page = 1
 
-    # 1. Detect active institutions (institutions with enrolled students, open flags, or anomaly alerts)
-    active_stu_ids = set(session.exec(select(Student.institution_id).distinct()).all())
-    active_flag_ids = set(session.exec(
-        select(ValidationFlag.institution_id).where(ValidationFlag.status == "OPEN").distinct()
-    ).all())
-    active_alert_ids = set(session.exec(select(AnomalyAlert.institution_id).distinct()).all())
-    all_active_ids = active_stu_ids | active_flag_ids | active_alert_ids
+    base_query = select(Institution.id, Institution.name, Institution.aicte_id, Institution.state, Institution.type)
+    count_query = select(func.count(Institution.id))
 
-    # 2. Build target institutions list
-    has_filter = bool(clean_search or clean_state or clean_type)
+    if clean_state:
+        base_query = base_query.where(Institution.state == clean_state)
+        count_query = count_query.where(Institution.state == clean_state)
+    if clean_type:
+        base_query = base_query.where(Institution.type == clean_type)
+        count_query = count_query.where(Institution.type == clean_type)
+    if clean_search:
+        s = f"%{clean_search}%"
+        cond = (Institution.name.ilike(s)) | (Institution.aicte_id.ilike(s)) | (Institution.state.ilike(s))
+        base_query = base_query.where(cond)
+        count_query = count_query.where(cond)
 
-    if has_filter:
-        query = select(Institution.id, Institution.name, Institution.aicte_id, Institution.state, Institution.type)
-        if clean_state:
-            query = query.where(Institution.state == clean_state)
-        if clean_type:
-            query = query.where(Institution.type == clean_type)
-        if clean_search:
-            s = f"%{clean_search}%"
-            query = query.where(
-                (Institution.name.ilike(s)) | (Institution.aicte_id.ilike(s)) | (Institution.state.ilike(s))
-            )
-        target_insts = session.exec(query.order_by(Institution.state, Institution.name).limit(clean_limit)).all()
-    else:
-        # Default view: prioritize all active institutions with demo data first, then other institutions up to limit
-        active_insts = session.exec(
-            select(Institution.id, Institution.name, Institution.aicte_id, Institution.state, Institution.type)
-            .where(Institution.id.in_(all_active_ids))
-            .order_by(Institution.id)
-        ).all()
-        other_limit = max(0, clean_limit - len(active_insts))
-        other_insts = []
-        if other_limit > 0:
-            other_insts = session.exec(
-                select(Institution.id, Institution.name, Institution.aicte_id, Institution.state, Institution.type)
-                .where(~Institution.id.in_(all_active_ids))
-                .order_by(Institution.state, Institution.name)
-                .limit(other_limit)
-            ).all()
-        target_insts = active_insts + other_insts
+    total_matched = session.exec(count_query).one()
+    total_pages = max(1, (total_matched + clean_page_size - 1) // clean_page_size)
+    clean_page = min(clean_page, total_pages) if total_matched > 0 else 1
+    offset = (clean_page - 1) * clean_page_size
 
+    # Fast indexed ordering by (state, name)
+    target_insts = session.exec(
+        base_query.order_by(Institution.state, Institution.name).offset(offset).limit(clean_page_size)
+    ).all()
     target_ids = [inst[0] for inst in target_insts]
+
+    all_states = [
+        "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar",
+        "Chandigarh", "Chhattisgarh", "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh",
+        "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra",
+        "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab",
+        "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh",
+        "Uttarakhand", "West Bengal"
+    ]
+    all_types = ["Government", "Private", "Aided", "University", "Autonomous"]
 
     if not target_ids:
         return templates.TemplateResponse(
@@ -308,27 +306,34 @@ def _render_compliance_summary(
                 "search": clean_search or "",
                 "selected_state": clean_state or "",
                 "selected_type": clean_type or "",
-                "states": [],
-                "types": [],
+                "states": all_states,
+                "types": all_types,
                 "total_matched": 0,
+                "page": clean_page,
+                "page_size": clean_page_size,
+                "total_pages": total_pages,
+                "has_prev": False,
+                "has_next": False,
+                "prev_page": 1,
+                "next_page": 1,
             },
         )
 
-    # 3. Batch query approved intake sum for target institutions (1 query)
+    # Batch query approved intake sum for target page institutions (1 query)
     intake_counts = dict(session.exec(
         select(Program.institution_id, func.sum(Program.approved_intake))
         .where(Program.institution_id.in_(target_ids))
         .group_by(Program.institution_id)
     ).all())
 
-    # 4. Batch query active student count for target institutions (1 query)
+    # Batch query active student count for target page institutions (1 query)
     enrolment_counts = dict(session.exec(
         select(Student.institution_id, func.count(Student.id))
         .where(Student.institution_id.in_(target_ids), Student.status == "ACTIVE")
         .group_by(Student.institution_id)
     ).all())
 
-    # 5. Batch query open validation flags grouped by severity for target institutions (1 query)
+    # Batch query open validation flags grouped by severity for target page institutions (1 query)
     flag_rows = session.exec(
         select(ValidationFlag.institution_id, ValidationFlag.severity, func.count(ValidationFlag.id))
         .where(ValidationFlag.institution_id.in_(target_ids), ValidationFlag.status == "OPEN")
@@ -339,14 +344,14 @@ def _render_compliance_summary(
         flags_by_inst[i_id][sev] += cnt
         flags_by_inst[i_id]["TOTAL"] += cnt
 
-    # 6. Batch query anomaly alerts count for target institutions (1 query)
+    # Batch query anomaly alerts count for target page institutions (1 query)
     anomaly_counts = dict(session.exec(
         select(AnomalyAlert.institution_id, func.count(AnomalyAlert.id))
         .where(AnomalyAlert.institution_id.in_(target_ids))
         .group_by(AnomalyAlert.institution_id)
     ).all())
 
-    # 7. Assemble rows with O(1) in-memory compliance score calculation
+    # Assemble rows with O(1) in-memory compliance score calculation
     rows = []
     for inst_id, name, aicte_id, inst_state, inst_type in target_insts:
         enrolment = enrolment_counts.get(inst_id, 0)
@@ -355,7 +360,6 @@ def _render_compliance_summary(
         inst_flags = flags_by_inst[inst_id]
         anomaly_count = anomaly_counts.get(inst_id, 0)
 
-        # In-memory compliance scoring (matches compliance_score logic identically)
         penalty = min(inst_flags["HIGH"] * 5.0 + inst_flags["MEDIUM"] * 2.0 + inst_flags["LOW"] * 0.5, 70.0)
         score = max(0, min(100, int(round(100.0 - penalty - min(anomaly_count * 5.0, 25.0)))))
 
@@ -372,16 +376,6 @@ def _render_compliance_summary(
             "compliance_score": score,
         })
 
-    all_states = [
-        "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar",
-        "Chandigarh", "Chhattisgarh", "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh",
-        "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra",
-        "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab",
-        "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh",
-        "Uttarakhand", "West Bengal"
-    ]
-    all_types = ["Government", "Private", "Aided", "University", "Autonomous"]
-
     return templates.TemplateResponse(
         request=request,
         name="compliance_summary.html",
@@ -394,7 +388,14 @@ def _render_compliance_summary(
             "selected_type": clean_type or "",
             "states": all_states,
             "types": all_types,
-            "total_matched": len(rows),
+            "total_matched": total_matched,
+            "page": clean_page,
+            "page_size": clean_page_size,
+            "total_pages": total_pages,
+            "has_prev": clean_page > 1,
+            "has_next": clean_page < total_pages,
+            "prev_page": clean_page - 1,
+            "next_page": clean_page + 1,
         },
     )
 
@@ -405,11 +406,14 @@ def compliance_summary(
     search: Optional[str] = Query(default=None),
     state: Optional[str] = Query(default=None),
     institution_type: Optional[str] = Query(default=None),
-    limit: int = Query(default=200, ge=10, le=2000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=10, le=200),
+    limit: Optional[int] = Query(default=None),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
-    return _render_compliance_summary(request, session, user, search, state, institution_type, limit)
+    eff_page_size = min(max(10, limit), 200) if limit is not None else page_size
+    return _render_compliance_summary(request, session, user, search, state, institution_type, page, eff_page_size)
 
 
 @router.get("/reports", response_class=HTMLResponse)
@@ -418,12 +422,15 @@ def aicte_reports_view(
     search: Optional[str] = Query(default=None),
     state: Optional[str] = Query(default=None),
     institution_type: Optional[str] = Query(default=None),
-    limit: int = Query(default=200, ge=10, le=2000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=10, le=200),
+    limit: Optional[int] = Query(default=None),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
     """Render the AICTE compliance and reports overview."""
-    return _render_compliance_summary(request, session, user, search, state, institution_type, limit)
+    eff_page_size = min(max(10, limit), 200) if limit is not None else page_size
+    return _render_compliance_summary(request, session, user, search, state, institution_type, page, eff_page_size)
 
 
 @router.get("/institutions", response_class=HTMLResponse)
@@ -432,12 +439,15 @@ def aicte_institutions_view(
     search: Optional[str] = Query(default=None),
     state: Optional[str] = Query(default=None),
     institution_type: Optional[str] = Query(default=None),
-    limit: int = Query(default=200, ge=10, le=2000),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=10, le=200),
+    limit: Optional[int] = Query(default=None),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
     """Render AICTE institutions directory with compliance metrics and drill-down links."""
-    return _render_compliance_summary(request, session, user, search, state, institution_type, limit)
+    eff_page_size = min(max(10, limit), 200) if limit is not None else page_size
+    return _render_compliance_summary(request, session, user, search, state, institution_type, page, eff_page_size)
 
 
 @router.get("/institutions/{institution_id}", response_class=HTMLResponse)
@@ -455,13 +465,19 @@ def aicte_institution_drilldown(
     programs = session.exec(
         select(Program).where(Program.institution_id == institution.id)
     ).all()
-    students = session.exec(
-        select(Student).where(
-            Student.institution_id == institution.id,
-            Student.status == "ACTIVE",
-        )
-    ).all()
-    total_students = len(students)
+
+    # Aggregate active student counts per program in 1 SQL query without hydrating full Student rows
+    prog_counts = dict(
+        session.exec(
+            select(Student.program_id, func.count(Student.id))
+            .where(
+                Student.institution_id == institution.id,
+                Student.status == "ACTIVE",
+            )
+            .group_by(Student.program_id)
+        ).all()
+    )
+    total_students = sum(prog_counts.values())
     approved_intake = sum(max(0, int(p.approved_intake or 0)) for p in programs)
 
     flags = session.exec(
@@ -478,12 +494,12 @@ def aicte_institution_drilldown(
         ).order_by(AnomalyAlert.created_at.desc())
     ).all()
 
-    c_score = compliance_score(institution.id, session)
+    # Reuse already-fetched flags and alerts to avoid 2 redundant WAN round-trips
+    c_score = compliance_score(institution.id, session, flags=flags, alerts=alerts)
 
     programs_data = []
     for prog in programs:
-        prog_students = [s for s in students if s.program_id == prog.id]
-        enrolled_regular = len(prog_students)
+        enrolled_regular = prog_counts.get(prog.id, 0)
         intake = prog.approved_intake or 0
         fill_ratio = round(enrolled_regular / intake, 3) if intake else 0.0
         decision = "ALLOW"
@@ -631,120 +647,270 @@ def aicte_summary(
     state: Optional[str] = Query(default=None),
     institution_type: Optional[str] = Query(default=None),
     academic_year: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
-    institutions, programs_by_institution, students, flags = _filtered_data(
-        session, state, institution_type, academic_year
-    )
-    institutions_by_id = {institution.id: institution for institution in institutions}
-    enrolment_by_institution: Counter[int] = Counter(
-        student.institution_id for student in students
-    )
-    flags_by_institution: Counter[int] = Counter(flag.institution_id for flag in flags)
-    flags_by_rule: Counter[str] = Counter(flag.rule_code for flag in flags)
+    clean_state = str(state).strip() if state and isinstance(state, str) and state.strip() else None
+    clean_type = str(institution_type).strip() if institution_type and isinstance(institution_type, str) and institution_type.strip() else None
+    clean_year = str(academic_year).strip() if academic_year and isinstance(academic_year, str) and academic_year.strip() else None
 
-    anomalies = session.exec(
-        select(AnomalyAlert).order_by(AnomalyAlert.created_at.desc()).limit(20)
+    # 1. Totals: Institution count
+    inst_count_query = select(func.count(Institution.id))
+    if clean_state:
+        inst_count_query = inst_count_query.where(Institution.state == clean_state)
+    if clean_type:
+        inst_count_query = inst_count_query.where(Institution.type == clean_type)
+    total_institutions = session.exec(inst_count_query).one()
+
+    # 2. Totals: Approved intake sum
+    intake_query = select(func.coalesce(func.sum(Program.approved_intake), 0)).select_from(Program)
+    if clean_state or clean_type:
+        intake_query = intake_query.join(Institution, Program.institution_id == Institution.id)
+        if clean_state:
+            intake_query = intake_query.where(Institution.state == clean_state)
+        if clean_type:
+            intake_query = intake_query.where(Institution.type == clean_type)
+    if clean_year:
+        intake_query = intake_query.where(Program.academic_year == clean_year)
+    total_intake = session.exec(intake_query).one()
+
+    # 3. Totals: Active enrolment count
+    enrol_query = select(func.count(Student.id)).select_from(Student).where(Student.status == "ACTIVE")
+    if clean_state or clean_type:
+        enrol_query = enrol_query.join(Institution, Student.institution_id == Institution.id)
+        if clean_state:
+            enrol_query = enrol_query.where(Institution.state == clean_state)
+        if clean_type:
+            enrol_query = enrol_query.where(Institution.type == clean_type)
+    if clean_year:
+        try:
+            year_int = int(clean_year.split("-")[0])
+            enrol_query = enrol_query.where(Student.admission_year == year_int)
+        except Exception:
+            pass
+    total_enrolment = session.exec(enrol_query).one()
+
+    # 4. Totals: Flagged institutions
+    flagged_inst_query = (
+        select(func.count(func.distinct(ValidationFlag.institution_id)))
+        .select_from(ValidationFlag)
+        .where(ValidationFlag.status == "OPEN")
+    )
+    if clean_state or clean_type:
+        flagged_inst_query = flagged_inst_query.join(Institution, ValidationFlag.institution_id == Institution.id)
+        if clean_state:
+            flagged_inst_query = flagged_inst_query.where(Institution.state == clean_state)
+        if clean_type:
+            flagged_inst_query = flagged_inst_query.where(Institution.type == clean_type)
+    flagged_institutions = session.exec(flagged_inst_query).one()
+
+    # 5. Totals: Cross institution duplicates
+    dup_query = (
+        select(Student.apaar_id)
+        .where(Student.status == "ACTIVE", func.upper(Student.mode) == "FULL_TIME")
+        .group_by(Student.apaar_id)
+        .having(func.count(func.distinct(Student.institution_id)) > 1)
+    )
+    cross_duplicate_count = len(session.exec(dup_query).all())
+
+    # 6. Flags by rule
+    flags_rule_query = (
+        select(ValidationFlag.rule_code, func.count(ValidationFlag.id))
+        .where(ValidationFlag.status == "OPEN")
+        .group_by(ValidationFlag.rule_code)
+    )
+    if clean_state or clean_type:
+        flags_rule_query = flags_rule_query.join(Institution, ValidationFlag.institution_id == Institution.id)
+        if clean_state:
+            flags_rule_query = flags_rule_query.where(Institution.state == clean_state)
+        if clean_type:
+            flags_rule_query = flags_rule_query.where(Institution.type == clean_type)
+    flags_by_rule = dict(sorted(session.exec(flags_rule_query).all()))
+
+    # 7. Latest HIGH flags
+    high_flags_query = (
+        select(ValidationFlag, Institution.name)
+        .join(Institution, ValidationFlag.institution_id == Institution.id)
+        .where(ValidationFlag.status == "OPEN", ValidationFlag.severity == "HIGH")
+        .order_by(ValidationFlag.created_at.desc())
+        .limit(10)
+    )
+    latest_high_flags = [
+        {
+            "institution_name": inst_name,
+            "rule_code": flag.rule_code,
+            "message": flag.message,
+            "created_at": flag.created_at.isoformat(),
+        }
+        for flag, inst_name in session.exec(high_flags_query).all()
+    ]
+
+    # 8. Anomaly alerts
+    anomaly_query = (
+        select(AnomalyAlert, Institution.name)
+        .join(Institution, AnomalyAlert.institution_id == Institution.id)
+        .order_by(AnomalyAlert.created_at.desc())
+        .limit(20)
+    )
+    anomaly_alerts = [
+        {
+            "institution_name": inst_name,
+            "code": alert.code,
+            "score": alert.score,
+            "reason": alert.reason,
+            "recommended_action": (
+                "Review enrollment and quota records."
+                if alert.code in {"A1", "A2"}
+                else "Review student classifications and supporting records."
+                if alert.code == "A3"
+                else "Review records in the flagged program."
+            ),
+            "created_at": alert.created_at.isoformat(),
+        }
+        for alert, inst_name in session.exec(anomaly_query).all()
+    ]
+
+    # 9. Academic years
+    ay_query = select(Program.academic_year).where(Program.academic_year.is_not(None)).distinct()
+    academic_years = sorted([y for y in session.exec(ay_query).all() if y])
+
+    # 10. Paginated Institution rows with projected columns
+    clean_page_size = min(max(1, int(page_size)), 200)
+    clean_page = max(1, int(page))
+
+    inst_base = select(Institution.id, Institution.name, Institution.aicte_id, Institution.state, Institution.type)
+    if clean_state:
+        inst_base = inst_base.where(Institution.state == clean_state)
+    if clean_type:
+        inst_base = inst_base.where(Institution.type == clean_type)
+
+    total_matched = session.exec(select(func.count()).select_from(inst_base.subquery())).one()
+    total_pages = max(1, (total_matched + clean_page_size - 1) // clean_page_size)
+    clean_page = min(clean_page, total_pages) if total_matched > 0 else 1
+    offset = (clean_page - 1) * clean_page_size
+
+    target_insts = session.exec(
+        inst_base.order_by(Institution.state, Institution.name).offset(offset).limit(clean_page_size)
     ).all()
-    anomalies_by_inst: dict[int, list[AnomalyAlert]] = defaultdict(list)
-    for a in anomalies:
-        anomalies_by_inst[a.institution_id].append(a)
+    target_ids = [inst[0] for inst in target_insts]
 
-    flags_list_by_inst: dict[int, list[ValidationFlag]] = defaultdict(list)
-    for f in flags:
-        flags_list_by_inst[f.institution_id].append(f)
+    intake_map = dict(session.exec(
+        select(Program.institution_id, func.sum(Program.approved_intake))
+        .where(Program.institution_id.in_(target_ids or [-1]))
+        .group_by(Program.institution_id)
+    ).all())
 
-    active_inst_ids = set(enrolment_by_institution.keys()) | set(flags_by_institution.keys()) | set(programs_by_institution.keys())
-    target_institutions = [i for i in institutions if i.id in active_inst_ids]
-    if len(target_institutions) < 25:
-        target_institutions += [i for i in institutions if i.id not in active_inst_ids][: (50 - len(target_institutions))]
+    enrol_map = dict(session.exec(
+        select(Student.institution_id, func.count(Student.id))
+        .where(Student.institution_id.in_(target_ids or [-1]), Student.status == "ACTIVE")
+        .group_by(Student.institution_id)
+    ).all())
+
+    flag_rows = session.exec(
+        select(ValidationFlag.institution_id, ValidationFlag.severity, func.count(ValidationFlag.id))
+        .where(ValidationFlag.institution_id.in_(target_ids or [-1]), ValidationFlag.status == "OPEN")
+        .group_by(ValidationFlag.institution_id, ValidationFlag.severity)
+    ).all()
+    flags_by_inst = defaultdict(lambda: {"HIGH": 0, "MEDIUM": 0, "LOW": 0, "TOTAL": 0})
+    for i_id, sev, cnt in flag_rows:
+        flags_by_inst[i_id][sev] += cnt
+        flags_by_inst[i_id]["TOTAL"] += cnt
+
+    alert_map = dict(session.exec(
+        select(AnomalyAlert.institution_id, func.count(AnomalyAlert.id))
+        .where(AnomalyAlert.institution_id.in_(target_ids or [-1]))
+        .group_by(AnomalyAlert.institution_id)
+    ).all())
 
     institution_rows = []
-    for institution in target_institutions:
-        intake = sum(
-            max(0, int(program.approved_intake or 0))
-            for program in programs_by_institution[institution.id]
-        )
-        enrolment = enrolment_by_institution[institution.id]
-        score = 100.0
-        penalty = sum(
-            5.0 if f.severity == "HIGH" else (2.0 if f.severity == "MEDIUM" else 0.5)
-            for f in flags_list_by_inst[institution.id]
-        )
-        score -= min(penalty, 70.0)
-        score -= min(len(anomalies_by_inst[institution.id]) * 5.0, 25.0)
-        c_score = max(0, min(100, int(round(score))))
+    for inst_id, name, aicte_id, inst_state, inst_type in target_insts:
+        enrolment = enrol_map.get(inst_id, 0)
+        intake = int(intake_map.get(inst_id, 0) or 0)
+        fill_ratio = round(enrolment / intake, 3) if intake > 0 else 0.0
+        inst_flags = flags_by_inst[inst_id]
+        anomaly_count = alert_map.get(inst_id, 0)
+
+        penalty = min(inst_flags["HIGH"] * 5.0 + inst_flags["MEDIUM"] * 2.0 + inst_flags["LOW"] * 0.5, 70.0)
+        score = max(0, min(100, int(round(100.0 - penalty - min(anomaly_count * 5.0, 25.0)))))
 
         institution_rows.append({
-            "id": institution.id,
-            "name": institution.name,
-            "aicte_id": institution.aicte_id,
-            "state": institution.state,
-            "type": institution.type,
+            "id": inst_id,
+            "name": name,
+            "aicte_id": aicte_id,
+            "state": inst_state,
+            "type": inst_type,
             "enrolment": enrolment,
             "approved_intake": intake,
-            "fill_ratio": round(enrolment / intake, 3) if intake else 0.0,
-            "open_flags": flags_by_institution[institution.id],
-            "compliance_score": c_score,
+            "fill_ratio": fill_ratio,
+            "open_flags": inst_flags["TOTAL"],
+            "compliance_score": score,
         })
 
-    active_institutions_by_apaar: dict[str, set[int]] = defaultdict(set)
-    for student in students:
-        if student.mode and student.mode.upper() == "FULL_TIME":
-            active_institutions_by_apaar[student.apaar_id].add(student.institution_id)
-    cross_duplicate_count = sum(
-        len(institution_ids) > 1 for institution_ids in active_institutions_by_apaar.values()
-    )
+    # 11. Chart institutions: institutions with activity (for fill % chart visualization)
+    active_stu_ids = set(session.exec(select(Student.institution_id).distinct()).all())
+    chart_inst_data = []
+    if active_stu_ids:
+        active_inst_rows = session.exec(
+            select(Institution.id, Institution.name, Institution.aicte_id, Institution.state, Institution.type)
+            .where(Institution.id.in_(active_stu_ids))
+        ).all()
+        act_ids = [r[0] for r in active_inst_rows]
+        act_intakes = dict(session.exec(
+            select(Program.institution_id, func.sum(Program.approved_intake))
+            .where(Program.institution_id.in_(act_ids))
+            .group_by(Program.institution_id)
+        ).all())
+        act_enrols = dict(session.exec(
+            select(Student.institution_id, func.count(Student.id))
+            .where(Student.institution_id.in_(act_ids), Student.status == "ACTIVE")
+            .group_by(Student.institution_id)
+        ).all())
+        for i_id, nm, a_id, st, tp in active_inst_rows:
+            enr = act_enrols.get(i_id, 0)
+            itk = int(act_intakes.get(i_id, 0) or 0)
+            chart_inst_data.append({
+                "id": i_id,
+                "name": nm,
+                "aicte_id": a_id,
+                "state": st,
+                "type": tp,
+                "enrolment": enr,
+                "approved_intake": itk,
+                "fill_ratio": round(enr / itk, 3) if itk > 0 else 0.0,
+            })
 
-    high_flags = sorted(
-        (flag for flag in flags if flag.severity == "HIGH"),
-        key=lambda flag: flag.created_at,
-        reverse=True,
-    )[:10]
-
-    academic_years = sorted(list({
-        p.academic_year for progs in programs_by_institution.values() for p in progs if p.academic_year
-    }))
+    all_states = [
+        "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar",
+        "Chandigarh", "Chhattisgarh", "Delhi", "Goa", "Gujarat", "Haryana", "Himachal Pradesh",
+        "Jammu and Kashmir", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", "Maharashtra",
+        "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab",
+        "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh",
+        "Uttarakhand", "West Bengal"
+    ]
+    all_types = ["Government", "Private", "Aided", "University", "Autonomous"]
 
     return {
         "totals": {
-            "institutions": len(institutions),
-            "total_enrolment": sum(enrolment_by_institution.values()),
-            "total_intake": sum(int(p.approved_intake or 0) for progs in programs_by_institution.values() for p in progs),
-            "flagged_institutions": sum(count > 0 for count in flags_by_institution.values()),
+            "institutions": total_institutions,
+            "total_enrolment": total_enrolment,
+            "total_intake": total_intake,
+            "flagged_institutions": flagged_institutions,
             "cross_institution_duplicates": cross_duplicate_count,
         },
         "institutions": institution_rows,
-        "flags_by_rule": dict(sorted(flags_by_rule.items())),
-        "latest_high_flags": [
-            {
-                "institution_name": institutions_by_id[flag.institution_id].name,
-                "rule_code": flag.rule_code,
-                "message": flag.message,
-                "created_at": flag.created_at.isoformat(),
-            }
-            for flag in high_flags
-        ],
-        "anomaly_alerts": [
-            {
-                "institution_name": institutions_by_id[alert.institution_id].name,
-                "code": alert.code,
-                "score": alert.score,
-                "reason": alert.reason,
-                "recommended_action": (
-                    "Review enrollment and quota records."
-                    if alert.code in {"A1", "A2"}
-                    else "Review student classifications and supporting records."
-                    if alert.code == "A3"
-                    else "Review records in the flagged program."
-                ),
-                "created_at": alert.created_at.isoformat(),
-            }
-            for alert in anomalies
-            if alert.institution_id in institutions_by_id
-        ],
+        "chart_institutions": chart_inst_data,
+        "flags_by_rule": flags_by_rule,
+        "latest_high_flags": latest_high_flags,
+        "anomaly_alerts": anomaly_alerts,
         "academic_years": academic_years,
+        "states": all_states,
+        "types": all_types,
+        "page": clean_page,
+        "page_size": clean_page_size,
+        "total_matched": total_matched,
+        "total_pages": total_pages,
     }
 
 

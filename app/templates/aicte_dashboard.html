@@ -90,6 +90,13 @@
         <tr><td colspan="7" class="py-6 text-center text-slate-400">Loading...</td></tr>
       </tbody>
     </table>
+    <div id="table-pagination" class="mt-4 pt-2 border-t flex flex-wrap items-center justify-between text-xs text-slate-500">
+      <span id="rank-page-info"></span>
+      <div class="flex gap-2">
+        <button type="button" id="rank-prev" class="rounded border border-gray-300 px-2 py-1 bg-white hover:bg-slate-50 disabled:opacity-40" disabled>&larr; Prev</button>
+        <button type="button" id="rank-next" class="rounded border border-gray-300 px-2 py-1 bg-white hover:bg-slate-50 disabled:opacity-40" disabled>Next &rarr;</button>
+      </div>
+    </div>
   </div>
 
   <div class="bg-white rounded-xl shadow p-4">
@@ -184,6 +191,8 @@
     const insts = d.institutions || d.per_institution || [];
 
     // filter dropdowns
+    if (d.states && Array.isArray(d.states)) d.states.forEach(s => seen.state.add(s));
+    if (d.types && Array.isArray(d.types)) d.types.forEach(ty => seen.type.add(ty));
     insts.forEach(i => {
       const s = pick(i, 'state'), ty = pick(i, 'type', 'institution_type');
       if (s) seen.state.add(s);
@@ -194,10 +203,11 @@
     fillSelect($('f-type'), Array.from(seen.type), 'All types');
     fillSelect($('f-year'), Array.from(seen.year), 'All years');
 
-    // charts
+    // charts: use chart_institutions if provided, otherwise insts
     initCharts();
     if (fillChart) {
-      const chartInsts = insts.slice(0, 20);
+      const chartSources = (d.chart_institutions && d.chart_institutions.length) ? d.chart_institutions : insts;
+      const chartInsts = chartSources.slice(0, 20);
       const pcts = chartInsts.map(fillPct);
       fillChart.data.labels = chartInsts.map(i => pick(i, 'name', 'institution_name', 'aicte_id'));
       fillChart.data.datasets[0].data = pcts.map(p => Math.round(p * 10) / 10);
@@ -218,11 +228,12 @@
     if ($('rank-body')) {
       const ranked = insts.slice().sort((a, b) =>
         Number(pick(a, 'compliance_score') ?? 100) - Number(pick(b, 'compliance_score') ?? 100));
+      const startIdx = ((d.page || 1) - 1) * (d.page_size || 50);
       $('rank-body').innerHTML = ranked.length ? ranked.map((i, n) => {
         const p = fillPct(i), sc = Number(pick(i, 'compliance_score') ?? 0);
         const id = pick(i, 'id', 'institution_id');
         return '<tr class="border-b">' +
-          '<td class="py-2 pr-3 text-slate-400">' + (n + 1) + '</td>' +
+          '<td class="py-2 pr-3 text-slate-400">' + (startIdx + n + 1) + '</td>' +
           '<td class="py-2 pr-3 font-medium">' + esc(pick(i, 'name', 'institution_name')) + '</td>' +
           '<td class="py-2 pr-3">' + esc(pick(i, 'state')) + '</td>' +
           '<td class="py-2 pr-3 font-semibold" style="color:' + fillColor(p) + '">' + p.toFixed(0) + '%</td>' +
@@ -231,6 +242,22 @@
           '<td class="py-2 text-right"><a class="text-indigo-700 underline" href="/aicte/institutions/' + esc(id) + '">Drill down</a></td>' +
           '</tr>';
       }).join('') : '<tr><td colspan="7" class="py-6 text-center text-slate-400">No institutions match the filters.</td></tr>';
+
+      // Table pagination info & buttons
+      const curPage = d.page || 1;
+      const totalPages = d.total_pages || 1;
+      const totalMatched = d.total_matched !== undefined ? d.total_matched : insts.length;
+      if ($('rank-page-info')) {
+        $('rank-page-info').textContent = 'Page ' + curPage + ' of ' + totalPages + ' (' + totalMatched + ' institutions)';
+      }
+      if ($('rank-prev')) {
+        $('rank-prev').disabled = curPage <= 1;
+        $('rank-prev').onclick = () => load(curPage - 1);
+      }
+      if ($('rank-next')) {
+        $('rank-next').disabled = curPage >= totalPages;
+        $('rank-next').onclick = () => load(curPage + 1);
+      }
     }
 
     // alerts panel
@@ -257,14 +284,20 @@
     }
   }
 
-  async function load() {
+  let currentPage = 1;
+
+  async function load(page = 1) {
+    currentPage = page;
     const q = new URLSearchParams();
     if ($('f-state') && $('f-state').value) q.set('state', $('f-state').value);
     if ($('f-type') && $('f-type').value) q.set('institution_type', $('f-type').value);
     if ($('f-year') && $('f-year').value) q.set('academic_year', $('f-year').value);
+    q.set('page', page);
+    q.set('page_size', 50);
+
     const err = $('load-error');
     try {
-      const res = await fetch(SUMMARY_URL + (q.toString() ? '?' + q : ''), { credentials: 'same-origin' });
+      const res = await fetch(SUMMARY_URL + '?' + q.toString(), { credentials: 'same-origin' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       render(data);
@@ -279,22 +312,28 @@
     }
   }
 
-  if ($('f-state')) $('f-state').addEventListener('change', load);
-  if ($('f-type')) $('f-type').addEventListener('change', load);
-  if ($('f-year')) $('f-year').addEventListener('change', load);
+  if ($('f-state')) $('f-state').addEventListener('change', () => load(1));
+  if ($('f-type')) $('f-type').addEventListener('change', () => load(1));
+  if ($('f-year')) $('f-year').addEventListener('change', () => load(1));
   if ($('f-clear')) {
     $('f-clear').addEventListener('click', () => {
       ['f-state', 'f-type', 'f-year'].forEach(id => { if ($(id)) $(id).value = ''; });
-      load();
+      load(1);
     });
   }
 
-  document.addEventListener('DOMContentLoaded', () => {
+  // Single safe initialization avoiding duplicate fetch
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      initCharts();
+      load(1);
+    });
+  } else {
     initCharts();
-    load();
-  });
-  // Also call load immediately in case DOMContentLoaded already fired
-  load();
-  setInterval(load, 10000);
+    load(1);
+  }
+
+  // Polling reduced to 60 seconds (1 minute) to reduce server load
+  setInterval(() => load(currentPage), 60000);
 </script>
 {% endblock %}

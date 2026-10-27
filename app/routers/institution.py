@@ -20,6 +20,7 @@ from app.database import get_session
 from app.models import Institution, Program, Student, User, ValidationFlag, utc_now
 from app.security import sign_record
 from app.validation import (
+    batch_intake_check,
     build_validation_context,
     intake_check,
     validate_program_intake,
@@ -75,11 +76,9 @@ def institution_dashboard(
     ).all()
 
     # KPI 1 & 2: Students & Intake
-    total_students = len(
-        session.exec(
-            select(Student.id).where(Student.institution_id == inst_id, Student.status == "ACTIVE")
-        ).all()
-    )
+    total_students = session.exec(
+        select(func.count(Student.id)).where(Student.institution_id == inst_id, Student.status == "ACTIVE")
+    ).one()
     approved_intake = sum(p.approved_intake for p in programs)
 
     # KPI 3: Fill %
@@ -97,8 +96,8 @@ def institution_dashboard(
     penalty = sum(5 if f.severity == "HIGH" else (2 if f.severity == "MEDIUM" else 0.5) for f in open_flags)
     compliance_score = max(0, int(round(100 - min(70, penalty))))
 
-    # Program quota monitoring data
-    programs_data = [intake_check(p.id, session) for p in programs]
+    # Program quota monitoring data (batch query eliminates N+1)
+    programs_data = batch_intake_check(programs, session)
 
     return templates.TemplateResponse(
         request=request,

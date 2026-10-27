@@ -4,9 +4,9 @@ Implements AICTE compliance rules R1 to R12, batch context preloading, and Intak
 """
 
 from datetime import datetime
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 
 from app.apaar_registry import validate_apaar_format, validate_dob_format
 from app.models import ApaarRegistry, Program, Setting, Student, ValidationFlag, utc_now
@@ -486,45 +486,9 @@ def run_full_validation(institution_id: int, session: Session) -> List[Validatio
     return created_flags
 
 
-def intake_check(program_id: int, session: Session) -> Dict[str, Any]:
-    """
-    Intake Guard (D1):
-    Checks seat intake quota for a program and determines status:
-    - ALLOW: fill ratio under 90%
-    - WARN: fill ratio 90% - 100%
-    - BLOCK: one more admission would exceed approved intake
-    """
-    program = session.get(Program, program_id)
-    if not program:
-        raise ValueError(f"Program ID {program_id} not found")
-
-    # Count active regular students in this program
-    regular_count = len(
-        session.exec(
-            select(Student.id).where(
-                Student.program_id == program_id,
-                Student.admission_type == "REGULAR",
-                Student.status == "ACTIVE",
-            )
-        ).all()
-    )
-
-    # Count active supernumerary students
-    super_count = len(
-        session.exec(
-            select(Student.id).where(
-                Student.program_id == program_id,
-                Student.admission_type == "SUPERNUMERARY",
-                Student.status == "ACTIVE",
-            )
-        ).all()
-    )
-
-    approved = program.approved_intake
-    remaining = max(0, approved - regular_count)
-    fill_ratio = regular_count / approved if approved > 0 else 1.0
-
-    settings = {
+def get_intake_settings(session: Session) -> Dict[str, str]:
+    """Fetch intake threshold settings once."""
+    return {
         setting.key: setting.value
         for setting in session.exec(
             select(Setting).where(
@@ -536,6 +500,49 @@ def intake_check(program_id: int, session: Session) -> Dict[str, Any]:
             )
         ).all()
     }
+
+
+def intake_check(
+    program_id: int,
+    session: Session,
+    program: Optional[Program] = None,
+    settings: Optional[Dict[str, str]] = None,
+    regular_count: Optional[int] = None,
+    super_count: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Intake Guard (D1):
+    Checks seat intake quota for a program and determines status:
+    - ALLOW: fill ratio under 90%
+    - WARN: fill ratio 90% - 100%
+    - BLOCK: one more admission would exceed approved intake
+    Optimized: accepts preloaded program/settings/counts, or queries SQL counts directly.
+    """
+    if program is None:
+        program = session.get(Program, program_id)
+        if not program:
+            raise ValueError(f"Program ID {program_id} not found")
+
+    if regular_count is None or super_count is None:
+        counts = dict(
+            session.exec(
+                select(Student.admission_type, func.count(Student.id))
+                .where(Student.program_id == program_id, Student.status == "ACTIVE")
+                .group_by(Student.admission_type)
+            ).all()
+        )
+        if regular_count is None:
+            regular_count = counts.get("REGULAR", 0)
+        if super_count is None:
+            super_count = counts.get("SUPERNUMERARY", 0)
+
+    approved = program.approved_intake
+    remaining = max(0, approved - regular_count)
+    fill_ratio = regular_count / approved if approved > 0 else 1.0
+
+    if settings is None:
+        settings = get_intake_settings(session)
+
     try:
         warning_threshold = float(settings.get("intake_warn_threshold", "0.90"))
         block_threshold = float(settings.get("intake_block_threshold", "1.00"))
@@ -566,6 +573,44 @@ def intake_check(program_id: int, session: Session) -> Dict[str, Any]:
         "fill_ratio": round(fill_ratio, 3),
         "decision": decision,
     }
+
+
+def batch_intake_check(
+    programs: List[Program],
+    session: Session,
+) -> List[Dict[str, Any]]:
+    """
+    High-performance batch intake check for multiple programs.
+    Eliminates N+1 queries by fetching settings once and aggregating student counts
+    across all programs in a single SQL GROUP BY query.
+    """
+    if not programs:
+        return []
+
+    settings = get_intake_settings(session)
+    prog_ids = [p.id for p in programs]
+
+    counts_rows = session.exec(
+        select(Student.program_id, Student.admission_type, func.count(Student.id))
+        .where(Student.program_id.in_(prog_ids), Student.status == "ACTIVE")
+        .group_by(Student.program_id, Student.admission_type)
+    ).all()
+
+    counts_by_prog: Dict[int, Dict[str, int]] = defaultdict(lambda: {"REGULAR": 0, "SUPERNUMERARY": 0})
+    for p_id, adm_type, cnt in counts_rows:
+        counts_by_prog[p_id][adm_type] = cnt
+
+    return [
+        intake_check(
+            program_id=p.id,
+            session=session,
+            program=p,
+            settings=settings,
+            regular_count=counts_by_prog[p.id]["REGULAR"],
+            super_count=counts_by_prog[p.id]["SUPERNUMERARY"],
+        )
+        for p in programs
+    ]
 
 
 def validate_program_intake(program_id: int, session: Session) -> List[ValidationFlag]:
