@@ -289,6 +289,38 @@
           {% endfor %}
         </tbody>
       </table>
+
+      {% if total_pages is defined and total_pages > 1 %}
+      {% set fs_param = ('&flag_search=' ~ flag_search) if flag_search else '' %}
+      {% set fr_param = ('&flag_rule=' ~ selected_rule) if selected_rule else '' %}
+      {% set fsev_param = ('&flag_severity=' ~ selected_severity) if selected_severity else '' %}
+      {% set fst_param = ('&flag_status=' ~ selected_flag_status) if selected_flag_status else '' %}
+      {% set p_size_param = ('&page_size=' ~ page_size) if page_size else '' %}
+      {% set base_flags_url = '/aicte/reports?tab=flags' ~ fs_param ~ fr_param ~ fsev_param ~ fst_param ~ p_size_param %}
+
+      <div class="px-5 py-3.5 border-t border-gray-200 bg-gray-50/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-600 print:hidden">
+        <div>Showing <span class="font-bold text-gray-900">{{ flags_rows|length }}</span> rows (Page <span class="font-bold text-gray-900">{{ page }}</span> of {{ total_pages }} &middot; {{ total_flag_count }} total issues)</div>
+        <div class="flex items-center space-x-1.5">
+          {% if has_prev %}
+          <a href="{{ base_flags_url }}&page=1" class="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition" title="First Page">&laquo;</a>
+          <a href="{{ base_flags_url }}&page={{ prev_page }}" class="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">&larr; Prev</a>
+          {% else %}
+          <span class="px-2.5 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&laquo;</span>
+          <span class="px-3 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&larr; Prev</span>
+          {% endif %}
+
+          <span class="px-3.5 py-1.5 rounded-md bg-indigo-600 font-semibold text-white shadow-xs">{{ page }}</span>
+
+          {% if has_next %}
+          <a href="{{ base_flags_url }}&page={{ next_page }}" class="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">Next &rarr;</a>
+          <a href="{{ base_flags_url }}&page={{ total_pages }}" class="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition" title="Last Page">&raquo;</a>
+          {% else %}
+          <span class="px-3 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">Next &rarr;</span>
+          <span class="px-2.5 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&raquo;</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
     </div>
   </div>
   {% endif %}
@@ -357,6 +389,32 @@
       <p class="text-xs text-gray-500 mt-1">All active student enrollments are unique across registered institutions.</p>
     </div>
     {% endfor %}
+
+    {% if total_dup_pages is defined and total_dup_pages > 1 %}
+    {% set base_d_url = '/aicte/duplicates?' if ('/duplicates' in request.url.path) else '/aicte/reports?tab=duplicates&' %}
+    <div class="px-5 py-3.5 rounded-xl border border-gray-200 bg-white shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-600 print:hidden">
+      <div>Showing <span class="font-bold text-gray-900">{{ duplicates|length }}</span> rows (Page <span class="font-bold text-gray-900">{{ dup_page }}</span> of {{ total_dup_pages }} &middot; {{ total_duplicates }} total duplicates)</div>
+      <div class="flex items-center space-x-1.5">
+        {% if has_prev %}
+        <a href="{{ base_d_url }}page=1&page_size={{ dup_page_size }}" class="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">&laquo;</a>
+        <a href="{{ base_d_url }}page={{ prev_page }}&page_size={{ dup_page_size }}" class="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">&larr; Prev</a>
+        {% else %}
+        <span class="px-2.5 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&laquo;</span>
+        <span class="px-3 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&larr; Prev</span>
+        {% endif %}
+
+        <span class="px-3.5 py-1.5 rounded-md bg-indigo-600 font-semibold text-white shadow-xs">{{ dup_page }}</span>
+
+        {% if has_next %}
+        <a href="{{ base_d_url }}page={{ next_page }}&page_size={{ dup_page_size }}" class="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">Next &rarr;</a>
+        <a href="{{ base_d_url }}page={{ total_dup_pages }}&page_size={{ dup_page_size }}" class="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">&raquo;</a>
+        {% else %}
+        <span class="px-3 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">Next &rarr;</span>
+        <span class="px-2.5 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&raquo;</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
   </div>
   {% endif %}
 </div>

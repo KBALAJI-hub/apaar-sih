@@ -217,6 +217,35 @@ def run_suite():
     assert resp_aud_v.json().get("ok") is True
     print("[PASS] 9. Settings, Audit Log, and Cryptographic Hash-Chain Verification")
 
+    # 10. Test 10 Rows Per Page Default on All Table Lists
+    # 10a: Institutions directory
+    resp_inst_page = admin_client.get("/aicte/institutions")
+    assert resp_inst_page.status_code == 200
+    assert "Showing <span class=\"font-bold text-slate-800\">10</span>" in resp_inst_page.text
+
+    # 10b: Compliance reports tab
+    resp_comp_page = admin_client.get("/aicte/reports?tab=compliance")
+    assert resp_comp_page.status_code == 200
+    assert "Showing <span class=\"font-bold text-gray-900\">10</span> rows" in resp_comp_page.text or "Showing <span class=\"font-bold text-slate-800\">10</span>" in resp_comp_page.text
+
+    # 10c: Validation flags report tab
+    resp_flags_page = admin_client.get("/aicte/reports?tab=flags")
+    assert resp_flags_page.status_code == 200
+    assert "Showing <span class=\"font-bold text-gray-900\">10</span> rows" in resp_flags_page.text
+
+    # 10d: Audit logs table
+    resp_aud_page = admin_client.get("/aicte/audit")
+    assert resp_aud_page.status_code == 200
+    assert "Showing <span class=\"font-bold text-gray-900\">10</span> rows" in resp_aud_page.text
+
+    # 10e: Institution students table
+    resp_login_inst1 = client.post("/login", data={"username": "inst1", "password": "Inst@123"}, follow_redirects=False)
+    inst1_client = TestClient(app, cookies={"access_token": resp_login_inst1.cookies.get("access_token")}, raise_server_exceptions=False)
+    resp_stu_page = inst1_client.get("/institution/students")
+    assert resp_stu_page.status_code == 200
+    assert "Showing <span class=\"font-bold text-gray-900\">1</span> &ndash; <span class=\"font-bold text-gray-900\">10</span>" in resp_stu_page.text
+    print("[PASS] 10. All Tables Displaying 10 Rows at a Time with Server-Side Pagination")
+
     print("\n==================================================================")
     print("      ALL USER REQUIREMENTS SUCCESSFULLY VERIFIED & PASSED!       ")
     print("==================================================================")

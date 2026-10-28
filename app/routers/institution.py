@@ -122,7 +122,7 @@ def list_students(
     q: Optional[str] = None,
     program_id: Optional[str] = None,
     page: int = 1,
-    per_page: int = 20,
+    per_page: int = 10,
     session: Session = Depends(get_session),
     user: User = Depends(require_role("INSTITUTION")),
 ):
@@ -135,7 +135,7 @@ def list_students(
 
     # Normalize per_page and page
     if per_page not in (10, 20, 50, 100):
-        per_page = 20
+        per_page = 10
     page = max(1, page)
 
     # Safely parse program_id string to integer (avoids 422 Unprocessable Entity when form submits program_id="")

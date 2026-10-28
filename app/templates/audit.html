@@ -63,6 +63,39 @@
       {% endfor %}
     </tbody>
   </table>
+
+  {% if total_pages is defined and total_pages > 1 %}
+  {% set u_param = ('&user=' ~ filters.user) if filters and filters.user else '' %}
+  {% set a_param = ('&action=' ~ filters.action) if filters and filters.action else '' %}
+  {% set df_param = ('&date_from=' ~ filters.date_from) if filters and filters.date_from else '' %}
+  {% set dt_param = ('&date_to=' ~ filters.date_to) if filters and filters.date_to else '' %}
+  {% set p_size_param = ('&page_size=' ~ page_size) if page_size else '' %}
+  {% set base_audit_url = '/aicte/audit?' ~ u_param ~ a_param ~ df_param ~ dt_param ~ p_size_param %}
+  <div class="px-4 py-3 border-t border-gray-200 bg-gray-50/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-600 mt-4 rounded-b-xl">
+    <div>
+      Showing <span class="font-bold text-gray-900">{{ logs|length }}</span> rows (Page <span class="font-bold text-gray-900">{{ page }}</span> of <span class="font-bold text-gray-900">{{ total_pages }}</span> &middot; {{ total_logs }} total logs)
+    </div>
+    <div class="flex items-center space-x-1.5">
+      {% if has_prev %}
+      <a href="{{ base_audit_url }}&page=1" class="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition" title="First Page">&laquo;</a>
+      <a href="{{ base_audit_url }}&page={{ prev_page }}" class="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">&larr; Prev</a>
+      {% else %}
+      <span class="px-2.5 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&laquo;</span>
+      <span class="px-3 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&larr; Prev</span>
+      {% endif %}
+
+      <span class="px-3.5 py-1.5 rounded-md bg-indigo-600 font-semibold text-white shadow-xs">{{ page }}</span>
+
+      {% if has_next %}
+      <a href="{{ base_audit_url }}&page={{ next_page }}" class="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">Next &rarr;</a>
+      <a href="{{ base_audit_url }}&page={{ total_pages }}" class="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition" title="Last Page">&raquo;</a>
+      {% else %}
+      <span class="px-3 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">Next &rarr;</span>
+      <span class="px-2.5 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&raquo;</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}
 

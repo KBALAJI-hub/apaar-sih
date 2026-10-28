@@ -169,11 +169,18 @@ def _get_cross_institution_duplicates(session: Session) -> list[dict]:
 @router.get("/duplicates", response_class=HTMLResponse)
 def cross_institution_duplicates_view(
     request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
-    """Render cross-institution duplicate evidence panel (backward-compatible)."""
-    duplicates = _get_cross_institution_duplicates(session)
+    """Render cross-institution duplicate evidence panel (backward-compatible) with pagination."""
+    all_duplicates = _get_cross_institution_duplicates(session)
+    total_duplicates = len(all_duplicates)
+    clean_page_size = max(1, min(int(page_size), 100))
+    total_dup_pages = max(1, (total_duplicates + clean_page_size - 1) // clean_page_size)
+    clean_dup_page = min(max(1, int(page)), total_dup_pages) if total_duplicates > 0 else 1
+    page_duplicates = all_duplicates[(clean_dup_page - 1) * clean_page_size : clean_dup_page * clean_page_size]
     flags_count = session.exec(select(func.count(ValidationFlag.id)).where(ValidationFlag.status == "OPEN")).one()
     return templates.TemplateResponse(
         request=request,
@@ -182,8 +189,16 @@ def cross_institution_duplicates_view(
             "role": user.role,
             "user": user,
             "active_tab": "duplicates",
-            "duplicates": duplicates,
+            "duplicates": page_duplicates,
             "flags_count": flags_count,
+            "total_duplicates": total_duplicates,
+            "dup_page": clean_dup_page,
+            "dup_page_size": clean_page_size,
+            "total_dup_pages": total_dup_pages,
+            "has_prev": clean_dup_page > 1,
+            "has_next": clean_dup_page < total_dup_pages,
+            "prev_page": clean_dup_page - 1,
+            "next_page": clean_dup_page + 1,
         },
     )
 
@@ -233,17 +248,28 @@ def audit_log_view(
     action: Optional[str] = Query(default=None),
     date_from: Optional[str] = Query(default=None),
     date_to: Optional[str] = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=10, ge=1, le=100),
     admin: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
-    """Render the tamper-evident hash-chained audit log page."""
-    query = select(AuditLog).order_by(AuditLog.id.desc()).limit(200)
+    """Render the tamper-evident hash-chained audit log page with pagination."""
+    query = select(AuditLog)
+    count_query = select(func.count(AuditLog.id))
     if user:
         query = query.where(AuditLog.username.contains(user))
+        count_query = count_query.where(AuditLog.username.contains(user))
     if action:
         query = query.where(AuditLog.action.contains(action))
+        count_query = count_query.where(AuditLog.action.contains(action))
 
-    logs = session.exec(query).all()
+    total_logs = session.exec(count_query).one()
+    clean_page_size = max(1, min(int(page_size), 100))
+    total_pages = max(1, (total_logs + clean_page_size - 1) // clean_page_size)
+    clean_page = min(max(1, int(page)), total_pages) if total_logs > 0 else 1
+    offset = (clean_page - 1) * clean_page_size
+
+    logs = session.exec(query.order_by(AuditLog.id.desc()).offset(offset).limit(clean_page_size)).all()
     return templates.TemplateResponse(
         request=request,
         name="audit.html",
@@ -252,6 +278,14 @@ def audit_log_view(
             "user": admin,
             "logs": logs,
             "filters": {"user": user, "action": action, "date_from": date_from, "date_to": date_to},
+            "page": clean_page,
+            "page_size": clean_page_size,
+            "total_logs": total_logs,
+            "total_pages": total_pages,
+            "has_prev": clean_page > 1,
+            "has_next": clean_page < total_pages,
+            "prev_page": clean_page - 1,
+            "next_page": clean_page + 1,
         },
     )
 
@@ -274,7 +308,7 @@ def _render_compliance_summary(
     state: Optional[str] = None,
     institution_type: Optional[str] = None,
     page: int = 1,
-    page_size: int = 50,
+    page_size: int = 10,
 ) -> Response:
     """
     High-performance compliance summary supporting both small local datasets and
@@ -285,9 +319,9 @@ def _render_compliance_summary(
     clean_state = str(state).strip() if state and isinstance(state, str) and state.strip() else None
     clean_type = str(institution_type).strip() if institution_type and isinstance(institution_type, str) and institution_type.strip() else None
     try:
-        clean_page_size = min(max(10, int(page_size)), 200)
+        clean_page_size = min(max(1, int(page_size)), 200)
     except (ValueError, TypeError):
-        clean_page_size = 50
+        clean_page_size = 10
     try:
         clean_page = max(1, int(page))
     except (ValueError, TypeError):
@@ -451,6 +485,8 @@ def _render_validation_flags_report(
     flag_rule: Optional[str] = None,
     flag_severity: Optional[str] = None,
     flag_status: str = "OPEN",
+    page: int = 1,
+    page_size: int = 10,
 ) -> Response:
     clean_search = (flag_search or "").strip()
     clean_rule = (flag_rule or "").strip()
@@ -460,22 +496,36 @@ def _render_validation_flags_report(
     query = select(ValidationFlag, Institution.name.label("institution_name")).join(
         Institution, ValidationFlag.institution_id == Institution.id, isouter=True
     )
+    count_query = select(func.count(ValidationFlag.id)).select_from(ValidationFlag)
+    if clean_search:
+        count_query = count_query.join(Institution, ValidationFlag.institution_id == Institution.id, isouter=True)
 
     if clean_status in ("OPEN", "RESOLVED"):
         query = query.where(ValidationFlag.status == clean_status)
+        count_query = count_query.where(ValidationFlag.status == clean_status)
     if clean_rule:
         query = query.where(ValidationFlag.rule_code == clean_rule)
+        count_query = count_query.where(ValidationFlag.rule_code == clean_rule)
     if clean_severity:
         query = query.where(ValidationFlag.severity == clean_severity)
+        count_query = count_query.where(ValidationFlag.severity == clean_severity)
     if clean_search:
         s = f"%{clean_search}%"
-        query = query.where(
+        cond = (
             (ValidationFlag.message.ilike(s)) |
             (Institution.name.ilike(s)) |
             (Institution.aicte_id.ilike(s))
         )
+        query = query.where(cond)
+        count_query = count_query.where(cond)
 
-    results = session.exec(query.order_by(ValidationFlag.created_at.desc()).limit(300)).all()
+    total_matched = session.exec(count_query).one()
+    clean_page_size = max(1, min(int(page_size), 200))
+    total_pages = max(1, (total_matched + clean_page_size - 1) // clean_page_size)
+    clean_page = min(max(1, int(page)), total_pages) if total_matched > 0 else 1
+    offset = (clean_page - 1) * clean_page_size
+
+    results = session.exec(query.order_by(ValidationFlag.created_at.desc()).offset(offset).limit(clean_page_size)).all()
 
     flags_rows = []
     for flag, inst_name in results:
@@ -508,9 +558,16 @@ def _render_validation_flags_report(
             "selected_flag_status": clean_status,
             "available_rules": available_rules,
             "flags_rows": flags_rows,
-            "total_flag_count": len(flags_rows),
+            "total_flag_count": total_matched,
             "flags_count": open_flags_count,
             "duplicates": duplicates,
+            "page": clean_page,
+            "page_size": clean_page_size,
+            "total_pages": total_pages,
+            "has_prev": clean_page > 1,
+            "has_next": clean_page < total_pages,
+            "prev_page": clean_page - 1,
+            "next_page": clean_page + 1,
         },
     )
 
@@ -523,15 +580,15 @@ def _render_institutions_directory(
     state: Optional[str] = None,
     institution_type: Optional[str] = None,
     page: int = 1,
-    page_size: int = 50,
+    page_size: int = 10,
 ) -> Response:
     clean_search = str(search).strip() if search and isinstance(search, str) and search.strip() else None
     clean_state = str(state).strip() if state and isinstance(state, str) and state.strip() else None
     clean_type = str(institution_type).strip() if institution_type and isinstance(institution_type, str) and institution_type.strip() else None
     try:
-        clean_page_size = min(max(10, int(page_size)), 200)
+        clean_page_size = min(max(1, int(page_size)), 200)
     except (ValueError, TypeError):
-        clean_page_size = 50
+        clean_page_size = 10
     try:
         clean_page = max(1, int(page))
     except (ValueError, TypeError):
@@ -623,12 +680,12 @@ def compliance_summary(
     state: Optional[str] = Query(default=None),
     institution_type: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=10, le=200),
+    page_size: int = Query(default=10, ge=1, le=200),
     limit: Optional[int] = Query(default=None),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
-    eff_page_size = min(max(10, limit), 200) if limit is not None else page_size
+    eff_page_size = min(max(1, limit), 200) if limit is not None else page_size
     return _render_compliance_summary(request, session, user, search, state, institution_type, page, eff_page_size)
 
 
@@ -644,13 +701,13 @@ def aicte_reports_view(
     flag_severity: Optional[str] = Query(default=None),
     flag_status: str = Query(default="OPEN"),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=10, le=200),
+    page_size: int = Query(default=10, ge=1, le=200),
     limit: Optional[int] = Query(default=None),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
     """Render unified AICTE regulatory reports portal with compliance, flags, and duplicates tabs."""
-    eff_page_size = min(max(10, limit), 200) if limit is not None else page_size
+    eff_page_size = min(max(1, limit), 200) if limit is not None else page_size
     clean_tab = (tab or "compliance").strip().lower()
 
     if clean_tab == "flags":
@@ -662,9 +719,15 @@ def aicte_reports_view(
             flag_rule=flag_rule,
             flag_severity=flag_severity,
             flag_status=flag_status,
+            page=page,
+            page_size=eff_page_size,
         )
     elif clean_tab == "duplicates":
-        duplicates = _get_cross_institution_duplicates(session)
+        all_duplicates = _get_cross_institution_duplicates(session)
+        total_duplicates = len(all_duplicates)
+        total_dup_pages = max(1, (total_duplicates + eff_page_size - 1) // eff_page_size)
+        clean_dup_page = min(max(1, page), total_dup_pages) if total_duplicates > 0 else 1
+        page_duplicates = all_duplicates[(clean_dup_page - 1) * eff_page_size : clean_dup_page * eff_page_size]
         flags_count = session.exec(select(func.count(ValidationFlag.id)).where(ValidationFlag.status == "OPEN")).one()
         return templates.TemplateResponse(
             request=request,
@@ -673,8 +736,16 @@ def aicte_reports_view(
                 "role": user.role,
                 "user": user,
                 "active_tab": "duplicates",
-                "duplicates": duplicates,
+                "duplicates": page_duplicates,
                 "flags_count": flags_count,
+                "total_duplicates": total_duplicates,
+                "dup_page": clean_dup_page,
+                "dup_page_size": eff_page_size,
+                "total_dup_pages": total_dup_pages,
+                "has_prev": clean_dup_page > 1,
+                "has_next": clean_dup_page < total_dup_pages,
+                "prev_page": clean_dup_page - 1,
+                "next_page": clean_dup_page + 1,
             },
         )
     else:
@@ -688,13 +759,13 @@ def aicte_institutions_view(
     state: Optional[str] = Query(default=None),
     institution_type: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=50, ge=10, le=200),
+    page_size: int = Query(default=10, ge=1, le=200),
     limit: Optional[int] = Query(default=None),
     user: User = Depends(require_role("AICTE_ADMIN")),
     session: Session = Depends(get_session),
 ):
     """Render AICTE institutions directory with search, filters, pagination, and registration modal."""
-    eff_page_size = min(max(10, limit), 200) if limit is not None else page_size
+    eff_page_size = min(max(1, limit), 200) if limit is not None else page_size
     return _render_institutions_directory(request, session, user, search, state, institution_type, page, eff_page_size)
 
 
