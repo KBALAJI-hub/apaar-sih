@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% block title %}Institutions Directory · APAAR Verify{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+  <!-- Top Header & Primary Actions -->
+  <div class="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-gray-200 print:hidden">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">AICTE Institutions Directory</h1>
+      <p class="text-sm text-slate-500">Official registry of affiliated institutions, sanctioned intakes, and program allocations.</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-3">
+      <button type="button" onclick="window.print()"
+              class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 bg-white hover:bg-gray-50 shadow-xs transition">
+        <svg class="w-4 h-4 mr-1.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path>
+        </svg>
+        Print / Save PDF
+      </button>
+      <button type="button" onclick="openRegisterModal()"
+              class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs transition">
+        <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+        </svg>
+        Register New Institution
+      </button>
+    </div>
+  </div>
+
+  <!-- Flash Notifications -->
+  {% if error or request.query_params.get('err') %}
+  <div class="p-4 rounded-xl bg-red-50 border border-red-200 text-sm text-red-800 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <svg class="w-5 h-5 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+      <span>{{ error or request.query_params.get('err') }}</span>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if success or request.query_params.get('msg') %}
+  <div class="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-sm text-emerald-800 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <svg class="w-5 h-5 text-emerald-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+      <span>{{ success or request.query_params.get('msg') }}</span>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Search & Filter Controls -->
+  <div class="bg-white rounded-xl border border-gray-200 shadow-xs p-4 print:hidden">
+    <form method="get" action="/aicte/institutions" class="flex flex-wrap items-center gap-3">
+      <div class="flex-1 min-w-[220px]">
+        <input type="text" name="search" value="{{ search or '' }}" placeholder="Search by institution name, AICTE ID, or state..."
+               class="w-full rounded-lg border border-gray-300 px-3.5 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+      <div class="w-48">
+        <select name="state" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="">All States (National)</option>
+          {% for s in states %}
+          <option value="{{ s }}" {% if selected_state == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="w-40">
+        <select name="institution_type" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          <option value="">All Types</option>
+          {% for t in types %}
+          <option value="{{ t }}" {% if selected_type == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="rounded-lg bg-gray-900 hover:bg-gray-800 px-4 py-2 font-semibold text-white text-sm shadow-xs transition">
+        Filter
+      </button>
+      {% if search or selected_state or selected_type %}
+      <a href="/aicte/institutions" class="rounded-lg bg-gray-100 hover:bg-gray-200 px-3 py-2 text-sm text-gray-700 transition">
+        Clear
+      </a>
+      {% endif %}
+      <div class="ml-auto text-xs text-slate-500 font-medium">
+        Showing <span class="font-bold text-slate-800">{{ rows|length }}</span> of {{ total_matched }} institutions
+        {% if total_pages > 1 %}(Page {{ page }} of {{ total_pages }}){% endif %}
+      </div>
+    </form>
+  </div>
+
+  <!-- Simplified Institutions Table -->
+  <div class="overflow-x-auto rounded-xl bg-white border border-gray-200 shadow-xs">
+    <table class="w-full text-left text-sm">
+      <thead class="bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase tracking-wider">
+        <tr>
+          <th class="px-5 py-3.5">AICTE ID</th>
+          <th class="px-5 py-3.5">Institution Name</th>
+          <th class="px-5 py-3.5">State</th>
+          <th class="px-5 py-3.5">Type</th>
+          <th class="px-5 py-3.5">Sanctioned Intake</th>
+          <th class="px-5 py-3.5 text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for row in rows %}
+        <tr class="hover:bg-gray-50/70 transition">
+          <td class="px-5 py-3.5 font-mono text-xs font-semibold text-indigo-700 whitespace-nowrap">
+            {{ row.aicte_id }}
+          </td>
+          <td class="px-5 py-3.5 font-medium text-gray-900">
+            {{ row.name }}
+          </td>
+          <td class="px-5 py-3.5 text-gray-600 text-xs">
+            {{ row.state }}
+          </td>
+          <td class="px-5 py-3.5 text-xs">
+            <span class="inline-block px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-700">
+              {{ row.type }}
+            </span>
+          </td>
+          <td class="px-5 py-3.5 font-semibold text-gray-900">
+            {{ row.intake }}
+          </td>
+          <td class="px-5 py-3.5 text-right whitespace-nowrap text-xs font-medium">
+            <a href="/aicte/institutions/{{ row.id }}" class="text-indigo-600 hover:text-indigo-900">
+              View Details &rarr;
+            </a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="px-5 py-12 text-center text-sm text-gray-500">
+            No registered institutions match your filter criteria.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <!-- Pagination Navigation -->
+    {% set s_param = ('&search=' ~ search) if search else '' %}
+    {% set st_param = ('&state=' ~ selected_state) if selected_state else '' %}
+    {% set t_param = ('&institution_type=' ~ selected_type) if selected_type else '' %}
+    {% set p_size_param = ('&page_size=' ~ page_size) if page_size else '' %}
+    {% set base_page_url = '/aicte/institutions?' ~ s_param ~ st_param ~ t_param ~ p_size_param %}
+
+    {% if total_pages > 1 %}
+    <div class="px-5 py-3.5 border-t border-gray-200 bg-gray-50/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-600 print:hidden">
+      <div>
+        Page <span class="font-bold text-gray-900">{{ page }}</span> of <span class="font-bold text-gray-900">{{ total_pages }}</span> ({{ total_matched }} total registered institutions)
+      </div>
+      <div class="flex items-center space-x-1.5">
+        {% if has_prev %}
+        <a href="{{ base_page_url }}&page=1" class="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition" title="First Page">&laquo;</a>
+        <a href="{{ base_page_url }}&page={{ prev_page }}" class="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">&larr; Prev</a>
+        {% else %}
+        <span class="px-2.5 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&laquo;</span>
+        <span class="px-3 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&larr; Prev</span>
+        {% endif %}
+
+        <span class="px-3.5 py-1.5 rounded-md bg-indigo-600 font-semibold text-white shadow-xs">{{ page }}</span>
+
+        {% if has_next %}
+        <a href="{{ base_page_url }}&page={{ next_page }}" class="px-3 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition">Next &rarr;</a>
+        <a href="{{ base_page_url }}&page={{ total_pages }}" class="px-2.5 py-1.5 rounded-md border border-gray-300 bg-white hover:bg-gray-100 font-medium text-gray-700 transition" title="Last Page">&raquo;</a>
+        {% else %}
+        <span class="px-3 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">Next &rarr;</span>
+        <span class="px-2.5 py-1.5 rounded-md border border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed">&raquo;</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Register New Institution Modal -->
+<div id="register-modal" class="fixed inset-0 z-50 hidden overflow-y-auto bg-gray-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+  <div class="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl border border-gray-200 overflow-hidden transform transition-all">
+    <div class="px-6 py-4 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+      <h3 class="text-base font-bold text-gray-900">Register New AICTE Institution</h3>
+      <button type="button" onclick="closeRegisterModal()" class="text-gray-400 hover:text-gray-600 text-lg font-bold leading-none">&times;</button>
+    </div>
+
+    <form method="post" action="/aicte/institutions/new" class="p-6 space-y-4">
+      <div>
+        <label for="reg-aicte-id" class="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
+          AICTE Permanent ID *
+        </label>
+        <input type="text" id="reg-aicte-id" name="aicte_id" required placeholder="e.g. 1-1000000001"
+               class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+        <p class="text-[11px] text-gray-500 mt-1">Must be unique across the national AICTE registry.</p>
+      </div>
+
+      <div>
+        <label for="reg-name" class="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
+          Institution Full Name *
+        </label>
+        <input type="text" id="reg-name" name="name" required placeholder="e.g. National Institute of Technology"
+               class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label for="reg-state" class="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
+            State / UT *
+          </label>
+          <select id="reg-state" name="state" required
+                  class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            <option value="">Select State</option>
+            {% for s in states %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label for="reg-type" class="block text-xs font-semibold uppercase tracking-wider text-gray-700 mb-1">
+            Institution Type *
+          </label>
+          <select id="reg-type" name="institution_type" required
+                  class="w-full px-3.5 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            <option value="">Select Type</option>
+            {% for t in types %}
+            <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="rounded-lg bg-indigo-50 p-3 text-xs text-indigo-900 border border-indigo-100">
+        <strong>Automatic Provisioning:</strong> A unique cryptographic API Key will be generated upon registration, and an audit trail event will be recorded in the hash-chain.
+      </div>
+
+      <div class="flex items-center justify-end gap-3 pt-3 border-t border-gray-200">
+        <button type="button" onclick="closeRegisterModal()"
+                class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-semibold text-gray-700 bg-white hover:bg-gray-50 transition">
+          Cancel
+        </button>
+        <button type="submit"
+                class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-semibold shadow-xs transition">
+          Confirm Registration
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  function openRegisterModal() {
+    const m = document.getElementById('register-modal');
+    if (m) m.classList.remove('hidden');
+  }
+  function closeRegisterModal() {
+    const m = document.getElementById('register-modal');
+    if (m) m.classList.add('hidden');
+  }
+</script>
+{% endblock %}
