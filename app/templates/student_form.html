@@ -24,6 +24,19 @@
     </div>
     {% endif %}
 
+    <!-- Mode Switcher (Single Entry vs Batch CSV) -->
+    {% if not student %}
+    <div class="flex items-center justify-between p-1.5 bg-gray-100 rounded-xl border border-gray-200 text-xs sm:text-sm font-semibold">
+        <span class="flex-1 text-center py-2 px-3 rounded-lg bg-white text-indigo-700 shadow-xs border border-gray-200/80">
+            Single Student Entry (Default)
+        </span>
+        <a href="/institution/upload" class="flex-1 text-center py-2 px-3 rounded-lg text-gray-600 hover:text-gray-900 transition flex items-center justify-center gap-1.5">
+            <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+            Batch Upload with CSV
+        </a>
+    </div>
+    {% endif %}
+
     <!-- Student Form -->
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 sm:p-8">
         <form method="POST" action="{% if student %}/institution/students/{{ student.id }}/edit{% else %}/institution/students/new{% endif %}" class="space-y-6">

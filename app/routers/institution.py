@@ -9,7 +9,8 @@ import io
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+import json
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 import pandas as pd
 from sqlmodel import Session, func, or_, select
@@ -34,6 +35,95 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # In-memory store for generated rejection error CSVs (keyed by institution_id)
+
+# Master AICTE validation rule metadata for inspection diagnostics
+RULE_METADATA: Dict[str, Dict[str, str]] = {
+    "R1": {
+        "name": "APAAR Checksum & Format",
+        "category": "Identity Validation",
+        "description": "12-digit numeric APAAR ID must satisfy the Verhoeff checksum algorithm and valid formatting.",
+        "field_key": "apaar_id",
+        "field_label": "APAAR ID",
+    },
+    "R2": {
+        "name": "National Registry Verification",
+        "category": "Registry Lookup",
+        "description": "APAAR ID must exist in the central AICTE / National Academic Depository master registry.",
+        "field_key": "apaar_id",
+        "field_label": "APAAR ID",
+    },
+    "R3": {
+        "name": "Identity Mismatch",
+        "category": "Identity Verification",
+        "description": "Student full name, date of birth, or gender differs from central registry baseline data.",
+        "field_key": "identity",
+        "field_label": "Full Name / DOB / Gender",
+    },
+    "R4": {
+        "name": "Internal Duplicate APAAR",
+        "category": "Duplicate Detection",
+        "description": "Same APAAR ID is assigned to multiple student records within this institution.",
+        "field_key": "apaar_id",
+        "field_label": "APAAR ID",
+    },
+    "R5": {
+        "name": "Cross-Institution Duplicate",
+        "category": "Multi-Enrollment",
+        "description": "Student is actively registered in concurrent full-time programs across multiple institutions.",
+        "field_key": "apaar_id",
+        "field_label": "APAAR ID",
+    },
+    "R6": {
+        "name": "Regular Intake Exceeded",
+        "category": "Intake Quota",
+        "description": "Active regular admissions exceed the sanctioned AICTE intake ceiling for the academic program.",
+        "field_key": "intake",
+        "field_label": "Regular Intake Capacity",
+    },
+    "R7": {
+        "name": "Supernumerary Cap Exceeded",
+        "category": "Intake Quota",
+        "description": "Supernumerary admissions exceed AICTE-permitted quota threshold for the program.",
+        "field_key": "supernumerary",
+        "field_label": "Supernumerary Quota Cap",
+    },
+    "R8": {
+        "name": "Demographic Inconsistency",
+        "category": "Data Quality",
+        "description": "Logical contradiction detected in demographic fields (e.g., nationality vs NRI/OCI status).",
+        "field_key": "nationality",
+        "field_label": "Nationality / NRI / OCI",
+    },
+    "R9": {
+        "name": "Mandatory Fields Missing",
+        "category": "Data Completeness",
+        "description": "Required student record fields (full name, DOB, roll number, admission type) are missing.",
+        "field_key": "mandatory",
+        "field_label": "Required Fields",
+    },
+    "R10": {
+        "name": "Student Consent Required",
+        "category": "Compliance & Privacy",
+        "description": "Mandatory DPDP Act / APAAR digital consent not recorded for student data verification.",
+        "field_key": "consent",
+        "field_label": "Digital Consent",
+    },
+    "R11": {
+        "name": "Unregistered Program Code",
+        "category": "Academic Program",
+        "description": "Assigned program is not recognized under current AICTE institution approval.",
+        "field_key": "program",
+        "field_label": "Academic Program",
+    },
+    "R12": {
+        "name": "Duplicate Institutional Roll No",
+        "category": "Duplicate Detection",
+        "description": "Institutional roll number / enrollment ID is assigned to more than one student in the institution.",
+        "field_key": "student_id",
+        "field_label": "Institutional Roll No",
+    },
+}
+
 ERROR_CSVS: Dict[int, str] = {}
 
 
@@ -54,6 +144,7 @@ def institution_root(request: Request, session: Session = Depends(get_session)):
 @router.get("/dashboard", response_class=HTMLResponse)
 def institution_dashboard(
     request: Request,
+    resolved: Optional[str] = None,
     session: Session = Depends(get_session),
     user: User = Depends(require_role("INSTITUTION")),
 ):
@@ -64,6 +155,7 @@ def institution_dashboard(
     - Fill %
     - Open Flags
     - Compliance Score
+    Includes preloaded validation inspector diagnostics for recent alerts.
     """
     inst_id = user.institution_id
     institution = session.get(Institution, inst_id)
@@ -74,6 +166,7 @@ def institution_dashboard(
     programs = session.exec(
         select(Program).where(Program.institution_id == inst_id)
     ).all()
+    programs_map = {p.id: p for p in programs}
 
     # KPI 1 & 2: Students & Intake
     total_students = session.exec(
@@ -99,6 +192,65 @@ def institution_dashboard(
     # Program quota monitoring data (batch query eliminates N+1)
     programs_data = batch_intake_check(programs, session)
 
+    # Prepare detailed inspection data for recent alerts (batch queries)
+    recent_flags = open_flags[:10]
+    flag_student_ids = [f.student_id for f in recent_flags if f.student_id]
+    students_map = {}
+    if flag_student_ids:
+        stus = session.exec(
+            select(Student).where(Student.id.in_(flag_student_ids), Student.institution_id == inst_id)
+        ).all()
+        students_map = {s.id: s for s in stus}
+
+    flags_inspector_data = []
+    for f in recent_flags:
+        stu = students_map.get(f.student_id) if f.student_id else None
+        prog = programs_map.get(f.program_id) or (programs_map.get(stu.program_id) if stu else None)
+        rule_meta = RULE_METADATA.get(f.rule_code, {
+            "name": f"Rule {f.rule_code}",
+            "category": "AICTE Guideline",
+            "description": f.message,
+            "field_key": "general",
+            "field_label": "Record",
+        })
+        flags_inspector_data.append({
+            "flag_id": f.id,
+            "rule_code": f.rule_code,
+            "rule_name": rule_meta["name"],
+            "category": rule_meta["category"],
+            "rule_description": rule_meta["description"],
+            "field_key": rule_meta.get("field_key", "general"),
+            "field_label": rule_meta.get("field_label", "Record"),
+            "severity": f.severity,
+            "message": f.message,
+            "recommended_action": f.recommended_action,
+            "created_at_fmt": f.created_at.strftime('%Y-%m-%d %H:%M') if f.created_at else "",
+            "has_student": stu is not None,
+            "student_id_pk": stu.id if stu else None,
+            "student_roll": stu.student_id if stu else "",
+            "student_name": stu.full_name if stu else "",
+            "student_apaar": stu.apaar_id if stu else "",
+            "student_dob": stu.dob if stu else "",
+            "student_gender": stu.gender if stu else "",
+            "student_category": stu.category if stu else "",
+            "student_adm_type": stu.admission_type if stu else "",
+            "student_adm_year": stu.admission_year if stu else "",
+            "student_status": stu.status if stu else "",
+            "student_mode": stu.mode if stu else "",
+            "student_is_nri": stu.is_nri if stu else False,
+            "student_oci": stu.oci_status if stu else False,
+            "student_fn": stu.is_foreign_national if stu else False,
+            "student_nationality": stu.nationality if stu else "Indian",
+            "has_signature": bool(stu and stu.record_signature),
+            "has_program": prog is not None,
+            "program_id": prog.id if prog else None,
+            "program_name": prog.name if prog else "",
+            "program_intake": prog.approved_intake if prog else 0,
+        })
+
+    flash_message = "Validation alert marked as resolved successfully." if resolved == "1" else None
+    flash_type = "success" if resolved == "1" else None
+
     return templates.TemplateResponse(
         request=request,
         name="institution_dashboard.html",
@@ -110,7 +262,14 @@ def institution_dashboard(
             "open_flags_count": open_flags_count,
             "compliance_score": compliance_score,
             "programs_data": programs_data,
-            "recent_flags": open_flags[:10],
+            "recent_flags": recent_flags,
+            "students_map": students_map,
+            "programs_map": programs_map,
+            "rule_metadata": RULE_METADATA,
+            "flags_inspector_data": flags_inspector_data,
+            "flags_inspector_json": json.dumps(flags_inspector_data),
+            "flash_message": flash_message,
+            "flash_type": flash_type,
             "role": user.role,
         },
     )
@@ -120,36 +279,75 @@ def institution_dashboard(
 def list_students(
     request: Request,
     q: Optional[str] = None,
-    program_id: Optional[int] = None,
+    program_id: Optional[str] = None,
+    student_pk: Optional[int] = None,
+    page: int = 1,
+    per_page: int = 10,
     session: Session = Depends(get_session),
     user: User = Depends(require_role("INSTITUTION")),
 ):
     """
-    List enrolled students for the logged-in institution with search and program filters.
+    List enrolled students for the logged-in institution with robust search, program filters, and server-side pagination.
+    Supports deep-linking and record highlighting from validation alert inspections.
     """
     inst_id = user.institution_id
     programs = session.exec(select(Program).where(Program.institution_id == inst_id)).all()
     programs_map = {p.id: p.name for p in programs}
 
-    # Base query restricted to this institution
-    statement = select(Student).where(Student.institution_id == inst_id)
+    # Normalize per_page and page
+    if per_page not in (10, 20, 50, 100):
+        per_page = 10
+    page = max(1, page)
 
-    # Program filter
-    if program_id:
-        statement = statement.where(Student.program_id == program_id)
+    # Safely parse program_id string to integer (avoids 422 Unprocessable Entity when form submits program_id="")
+    parsed_program_id: Optional[int] = None
+    if program_id and str(program_id).strip():
+        try:
+            parsed_program_id = int(str(program_id).strip())
+        except (ValueError, TypeError):
+            parsed_program_id = None
 
-    # Search filter (name, roll no, or APAAR ID)
+    # Base filter criteria
+    filters = [Student.institution_id == inst_id]
+    if student_pk:
+        filters.append(Student.id == student_pk)
+    if parsed_program_id:
+        filters.append(Student.program_id == parsed_program_id)
+
+    # Robust search: matches student name, institutional roll no, or APAAR ID (handles formatted/spaced IDs)
     if q and q.strip():
-        term = f"%{q.strip()}%"
-        statement = statement.where(
-            or_(
-                Student.full_name.ilike(term),
-                Student.student_id.ilike(term),
-                Student.apaar_id.ilike(term),
-            )
-        )
+        raw_term = q.strip()
+        term = f"%{raw_term}%"
+        digits_only = "".join(c for c in raw_term if c.isdigit())
 
-    statement = statement.order_by(Student.id.desc()).limit(150)
+        search_clauses = [
+            Student.full_name.ilike(term),
+            Student.student_id.ilike(term),
+            Student.apaar_id.ilike(term),
+        ]
+        if digits_only:
+            digit_term = f"%{digits_only}%"
+            search_clauses.append(Student.apaar_id.ilike(digit_term))
+            search_clauses.append(Student.student_id.ilike(digit_term))
+            if raw_term.isdigit():
+                try:
+                    search_clauses.append(Student.id == int(raw_term))
+                except (ValueError, TypeError):
+                    pass
+
+        filters.append(or_(*search_clauses))
+
+    # Total count calculation
+    count_statement = select(func.count(Student.id)).where(*filters)
+    total_students = session.exec(count_statement).one()
+
+    # Pagination bounds
+    total_pages = max(1, (total_students + per_page - 1) // per_page)
+    current_page = max(1, min(page, total_pages)) if total_students > 0 else 1
+    offset = (current_page - 1) * per_page
+
+    # Query paginated student records
+    statement = select(Student).where(*filters).order_by(Student.id.desc()).offset(offset).limit(per_page)
     students = session.exec(statement).all()
 
     # Pre-calculate open flags count per student for UI badges
@@ -160,6 +358,9 @@ def list_students(
     ).all()
     flags_by_student = {f[0]: f[1] for f in flags if f[0] is not None}
 
+    start_idx = offset + 1 if total_students > 0 else 0
+    end_idx = min(offset + per_page, total_students)
+
     return templates.TemplateResponse(
         request=request,
         name="institution_students.html",
@@ -169,10 +370,234 @@ def list_students(
             "programs_map": programs_map,
             "flags_by_student": flags_by_student,
             "search_query": q,
-            "selected_program_id": program_id,
+            "selected_program_id": parsed_program_id,
+            "highlight_id": student_pk,
+            "role": user.role,
+            "current_page": current_page,
+            "per_page": per_page,
+            "total_students": total_students,
+            "total_pages": total_pages,
+            "start_idx": start_idx,
+            "end_idx": end_idx,
+            "has_prev": current_page > 1,
+            "has_next": current_page < total_pages,
+            "prev_page": current_page - 1,
+            "next_page": current_page + 1,
+        },
+    )
+
+
+@router.get("/alerts/export", response_class=StreamingResponse)
+def export_validation_alerts(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("INSTITUTION")),
+):
+    """
+    Download a CSV report of validation flags for the logged-in institution.
+    """
+    inst_id = user.institution_id
+    institution = session.get(Institution, inst_id)
+    flags = session.exec(
+        select(ValidationFlag)
+        .where(ValidationFlag.institution_id == inst_id)
+        .order_by(ValidationFlag.id.desc())
+    ).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Flag ID",
+        "Institution ID",
+        "Institution Name",
+        "Rule Code",
+        "Severity",
+        "Student ID",
+        "Program ID",
+        "Message",
+        "Recommended Action",
+        "Status",
+        "Created At",
+    ])
+    for f in flags:
+        writer.writerow([
+            f.id,
+            inst_id,
+            institution.name if institution else "",
+            f.rule_code,
+            f.severity,
+            f.student_id or "",
+            f.program_id or "",
+            f.message,
+            f.recommended_action,
+            f.status,
+            f.created_at.strftime("%Y-%m-%d %H:%M:%S") if f.created_at else "",
+        ])
+
+    output.seek(0)
+    filename = f"institution_validation_alerts_{inst_id}.csv"
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+@router.get("/alerts/{flag_id}/inspect", response_class=HTMLResponse)
+def inspect_validation_alert(
+    flag_id: int,
+    request: Request,
+    json_mode: Optional[int] = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("INSTITUTION")),
+):
+    """
+    Dedicated inspection view for an individual validation alert.
+    Displays comprehensive student/program context, exact rule violations, AICTE guidance, and quick actions.
+    """
+    inst_id = user.institution_id
+    flag = session.get(ValidationFlag, flag_id)
+    if not flag or flag.institution_id != inst_id:
+        raise HTTPException(status_code=404, detail="Validation alert not found or access denied")
+
+    institution = session.get(Institution, inst_id)
+    student = session.get(Student, flag.student_id) if flag.student_id else None
+    program = session.get(Program, flag.program_id) if flag.program_id else (
+        session.get(Program, student.program_id) if student else None
+    )
+
+    other_flags = []
+    if student:
+        other_flags = session.exec(
+            select(ValidationFlag)
+            .where(
+                ValidationFlag.institution_id == inst_id,
+                ValidationFlag.student_id == student.id,
+                ValidationFlag.status == "OPEN",
+                ValidationFlag.id != flag.id,
+            )
+        ).all()
+    elif program:
+        other_flags = session.exec(
+            select(ValidationFlag)
+            .where(
+                ValidationFlag.institution_id == inst_id,
+                ValidationFlag.program_id == program.id,
+                ValidationFlag.status == "OPEN",
+                ValidationFlag.id != flag.id,
+            )
+        ).all()
+
+    rule_meta = RULE_METADATA.get(flag.rule_code, {
+        "name": f"Rule {flag.rule_code}",
+        "category": "AICTE Guideline",
+        "description": flag.message,
+        "field_key": "general",
+        "field_label": "Record",
+    })
+
+    intake_data = None
+    if program:
+        intake_data = intake_check(program.id, session)
+
+    if json_mode == 1 or request.headers.get("accept", "").startswith("application/json"):
+        return JSONResponse({
+            "flag_id": flag.id,
+            "rule_code": flag.rule_code,
+            "rule_name": rule_meta["name"],
+            "category": rule_meta["category"],
+            "rule_description": rule_meta["description"],
+            "severity": flag.severity,
+            "message": flag.message,
+            "recommended_action": flag.recommended_action,
+            "status": flag.status,
+            "created_at": flag.created_at.strftime('%Y-%m-%d %H:%M') if flag.created_at else "",
+            "student": {
+                "id": student.id,
+                "student_id": student.student_id,
+                "full_name": student.full_name,
+                "apaar_id": student.apaar_id,
+                "dob": student.dob,
+                "gender": student.gender,
+                "category": student.category,
+                "admission_type": student.admission_type,
+                "status": student.status,
+            } if student else None,
+            "program": {
+                "id": program.id,
+                "name": program.name,
+                "approved_intake": program.approved_intake,
+            } if program else None,
+        })
+
+    return templates.TemplateResponse(
+        request=request,
+        name="institution_alert_inspect.html",
+        context={
+            "institution": institution,
+            "flag": flag,
+            "student": student,
+            "program": program,
+            "other_flags": other_flags,
+            "rule_meta": rule_meta,
+            "intake_data": intake_data,
             "role": user.role,
         },
     )
+
+
+@router.post("/alerts/{flag_id}/resolve")
+def resolve_validation_alert(
+    flag_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("INSTITUTION")),
+):
+    """
+    Mark an open validation alert as RESOLVED and log an immutable audit trail entry.
+    """
+    inst_id = user.institution_id
+    flag = session.get(ValidationFlag, flag_id)
+    if not flag or flag.institution_id != inst_id:
+        raise HTTPException(status_code=404, detail="Alert record not found or access denied")
+
+    flag.status = "RESOLVED"
+    session.add(flag)
+
+    student = session.get(Student, flag.student_id) if flag.student_id else None
+    audit_details = (
+        f"Institution user {user.username} resolved alert {flag.rule_code} (Flag #{flag.id}) "
+        f"for student {student.student_id if student else 'N/A'}"
+    )
+    log_action(
+        session=session,
+        user=user,
+        action="RESOLVE_FLAG",
+        entity="VALIDATION_FLAG",
+        entity_id=str(flag.id),
+        details=audit_details,
+    )
+    session.commit()
+
+    accept = request.headers.get("accept", "")
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in accept or "application/json" in content_type:
+        return JSONResponse({"ok": True, "message": f"Alert {flag.rule_code} marked as resolved."})
+
+    return RedirectResponse(
+        url="/institution/dashboard?resolved=1",
+        status_code=status.HTTP_303_SEE_OTHER,
+    )
+
+
+@router.post("/flags/{flag_id}/resolve")
+def resolve_flag_legacy(
+    flag_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("INSTITUTION")),
+):
+    """Backward compatibility alias for resolving flags."""
+    return resolve_validation_alert(flag_id=flag_id, request=request, session=session, user=user)
+
 
 
 @router.get("/students/new", response_class=HTMLResponse)

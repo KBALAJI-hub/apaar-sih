@@ -1,22 +1,23 @@
 {% extends "base.html" %}
-{% block title %}AICTE Dashboard · APAAR Verify{% endblock %}
+{% block title %}AICTE Dashboard · ApaarAnvaya{% endblock %}
 
 {% block content %}
-<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+<div class="page-heading">
   <div>
-    <h1 class="text-2xl font-bold text-indigo-900">AICTE Dashboard</h1>
-    <p class="text-xs text-slate-500">
-      <span class="inline-block w-2 h-2 rounded-full bg-green-500 align-middle"></span>
-      Live · refreshes every 10 s · last updated <span id="last-updated">never</span>
-    </p>
+    <div class="page-eyebrow"><span class="eyebrow-dot"></span> NATIONAL OVERSIGHT</div>
+    <h1>Regulatory overview</h1>
+    <p>Enrollment intelligence and institution compliance across the network.</p>
   </div>
-  <a href="/aicte/reports" class="bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-semibold px-4 py-2 rounded">Reports</a>
+  <div class="dashboard-heading-actions">
+    <span class="live-status"><i></i> LIVE <span>Updated <b id="last-updated">never</b></span></span>
+    <a href="/aicte/reports" class="bg-indigo-700 hover:bg-indigo-800 text-white text-sm font-semibold px-4 py-2 rounded-lg">Open reports <span aria-hidden="true">→</span></a>
+  </div>
 </div>
 
 <div id="load-error" class="hidden mb-4 px-4 py-2 rounded border bg-red-50 border-red-300 text-red-800 text-sm"></div>
 
 <!-- ===== Filters ===== -->
-<div class="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-3 items-end">
+<div class="filter-panel bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-3 items-end">
   <div>
     <label for="f-state" class="block text-xs text-slate-500 mb-1">State</label>
     <select id="f-state" class="border rounded px-3 py-2 text-sm"><option value="">All states</option></select>
@@ -33,79 +34,71 @@
 </div>
 
 <!-- ===== 5 KPI cards ===== -->
-<div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-  <div class="bg-white rounded-xl shadow p-4">
-    <div class="text-xs uppercase text-slate-500">Institutions</div>
-    <div id="k-institutions" class="text-3xl font-bold mt-1">-</div>
+<div class="metric-grid grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+  <div class="metric-card">
+    <div class="metric-label">Institutions</div>
+    <div id="k-institutions" class="metric-value">-</div>
   </div>
-  <div class="bg-white rounded-xl shadow p-4">
-    <div class="text-xs uppercase text-slate-500">Total Enrolment</div>
-    <div id="k-enrolment" class="text-3xl font-bold mt-1">-</div>
+  <div class="metric-card">
+    <div class="metric-label">Total Enrolment</div>
+    <div id="k-enrolment" class="metric-value">-</div>
   </div>
-  <div class="bg-white rounded-xl shadow p-4">
-    <div class="text-xs uppercase text-slate-500">Total Intake</div>
-    <div id="k-intake" class="text-3xl font-bold mt-1">-</div>
+  <div class="metric-card">
+    <div class="metric-label">Total Intake</div>
+    <div id="k-intake" class="metric-value">-</div>
   </div>
-  <div class="bg-white rounded-xl shadow p-4">
-    <div class="text-xs uppercase text-slate-500">Flagged Institutions</div>
-    <div id="k-flagged" class="text-3xl font-bold mt-1 text-amber-600">-</div>
+  <div class="metric-card metric-card--alert">
+    <div class="metric-label">Flagged Institutions</div>
+    <div id="k-flagged" class="metric-value text-amber-600">-</div>
   </div>
-  <a href="/aicte/duplicates" class="bg-white rounded-xl shadow p-4 hover:ring-2 hover:ring-red-300">
-    <div class="text-xs uppercase text-slate-500">Cross-institution Duplicates</div>
-    <div id="k-dups" class="text-3xl font-bold mt-1 text-red-600">-</div>
+  <a href="/aicte/reports?tab=duplicates" class="metric-card metric-card--alert">
+    <div class="metric-label">Cross-institution Duplicates</div>
+    <div id="k-dups" class="metric-value text-red-600">-</div>
   </a>
 </div>
 
 <!-- ===== Charts ===== -->
 <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-  <div class="bg-white rounded-xl shadow p-4">
+  <div class="chart-card p-5">
     <h2 class="font-semibold mb-1">Fill ratio per institution</h2>
-    <p class="text-xs text-slate-500 mb-2">Red: above 100% (intake exceeded) · amber: 90-100% · green: below 90%</p>
-    <div class="relative h-64"><canvas id="fillChart"></canvas></div>
+    <p class="text-xs text-slate-500 mb-2">Over 100%: intake exceeded · 90-100%: near limit · below 90%: within intake</p>
+    <div class="relative h-64 fill-chart-frame"><canvas id="fillChart"></canvas></div>
   </div>
-  <div class="bg-white rounded-xl shadow p-4">
+  <div class="chart-card p-5">
     <h2 class="font-semibold mb-1">Open flags by rule</h2>
     <p class="text-xs text-slate-500 mb-2">Count of open validation flags per rule code</p>
     <div class="relative h-64"><canvas id="flagChart"></canvas></div>
   </div>
 </div>
 
-<!-- ===== Ranking + alerts ===== -->
-<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-  <div class="bg-white rounded-xl shadow p-4 lg:col-span-2 overflow-x-auto">
-    <h2 class="font-semibold mb-3">Institutions by risk (lowest compliance first)</h2>
-    <table class="w-full text-sm">
-      <thead>
-        <tr class="text-left text-slate-500 border-b">
-          <th class="py-2 pr-3">#</th>
-          <th class="py-2 pr-3">Institution</th>
-          <th class="py-2 pr-3">State</th>
-          <th class="py-2 pr-3">Fill</th>
-          <th class="py-2 pr-3">Open flags</th>
-          <th class="py-2 pr-3">Score</th>
-          <th class="py-2"></th>
-        </tr>
-      </thead>
-      <tbody id="rank-body">
-        <tr><td colspan="7" class="py-6 text-center text-slate-400">Loading...</td></tr>
-      </tbody>
-    </table>
-    <div id="table-pagination" class="mt-4 pt-2 border-t flex flex-wrap items-center justify-between text-xs text-slate-500">
-      <span id="rank-page-info"></span>
-      <div class="flex gap-2">
-        <button type="button" id="rank-prev" class="rounded border border-gray-300 px-2 py-1 bg-white hover:bg-slate-50 disabled:opacity-40" disabled>&larr; Prev</button>
-        <button type="button" id="rank-next" class="rounded border border-gray-300 px-2 py-1 bg-white hover:bg-slate-50 disabled:opacity-40" disabled>Next &rarr;</button>
+<div class="chart-card p-5 mb-6">
+    <div class="flex items-center justify-between gap-3 mb-3">
+      <div>
+        <h2 class="font-semibold">System regulatory alerts</h2>
+        <p class="text-xs text-slate-500 mt-1">High-severity flags and detected anomalies</p>
       </div>
+      <a href="/aicte/reports" class="text-xs font-semibold text-indigo-700 hover:text-indigo-900">Reports &rarr;</a>
     </div>
-  </div>
-
-  <div class="bg-white rounded-xl shadow p-4">
-    <h2 class="font-semibold mb-3">Alerts</h2>
-    <h3 class="text-xs uppercase text-slate-500 mb-1">Latest HIGH flags</h3>
-    <ul id="high-flags" class="space-y-2 text-sm mb-4"></ul>
-    <h3 class="text-xs uppercase text-slate-500 mb-1">Anomaly alerts</h3>
-    <ul id="anomalies" class="space-y-2 text-sm"></ul>
-    <a href="/aicte/anomalies" class="inline-block mt-3 text-xs text-indigo-700 underline">All anomaly alerts &rarr;</a>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <section>
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-red-700">Critical validation flags</h3>
+          <span class="text-xs text-slate-400 font-medium">Real-time</span>
+        </div>
+        <ul id="high-flags" class="space-y-2.5 text-sm">
+          <li class="text-slate-400 text-xs py-3 text-center">Loading critical flags...</li>
+        </ul>
+      </section>
+      <section>
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-amber-700">Anomaly and surge outliers</h3>
+          <a href="/aicte/reports" class="text-xs text-indigo-600 hover:underline">View reports</a>
+        </div>
+        <ul id="anomalies" class="space-y-2.5 text-sm">
+          <li class="text-slate-400 text-xs py-3 text-center">Loading anomaly alerts...</li>
+        </ul>
+      </section>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -118,7 +111,8 @@
     c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const pick = (o, ...keys) => { for (const k of keys) if (o && o[k] !== undefined && o[k] !== null) return o[k]; return undefined; };
 
-  const RED = '#dc2626', AMBER = '#d97706', GREEN = '#16a34a', INDIGO = '#4f46e5';
+  const RED = '#c97982', AMBER = '#c5a165', GREEN = '#68ad9f', INDIGO = '#6997c8';
+  const CHART_TEXT = '#a4b1c0', CHART_GRID = 'rgba(169,189,213,0.14)';
 
   function formatNum(v) {
     if (v === undefined || v === null || v === '-') return '-';
@@ -128,6 +122,7 @@
 
   // ---- Safe Charts Initialization ----
   let fillChart = null;
+  let fillChartFullLabels = [];
   let flagChart = null;
 
   function initCharts() {
@@ -140,8 +135,18 @@
         data: { labels: [], datasets: [{ label: 'Fill %', data: [], backgroundColor: [] }] },
         options: {
           maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: { y: { beginAtZero: true, title: { display: true, text: 'Fill %' } } }
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#121b28', titleColor: '#edf2f7', bodyColor: '#c0cad6',
+              borderColor: 'rgba(169,189,213,0.2)', borderWidth: 1,
+              callbacks: { title: items => fillChartFullLabels[items[0].dataIndex] || '' }
+            }
+          },
+          scales: {
+            x: { ticks: { color: CHART_TEXT, maxRotation: 0, minRotation: 0, autoSkip: true, maxTicksLimit: 6 }, grid: { display: false } },
+            y: { beginAtZero: true, title: { display: true, text: 'Fill %', color: CHART_TEXT }, ticks: { color: CHART_TEXT }, grid: { color: CHART_GRID } }
+          }
         }
       });
     }
@@ -151,8 +156,14 @@
         data: { labels: [], datasets: [{ label: 'Open flags', data: [], backgroundColor: INDIGO }] },
         options: {
           maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+          plugins: {
+            legend: { display: false },
+            tooltip: { backgroundColor: '#121b28', titleColor: '#edf2f7', bodyColor: '#c0cad6', borderColor: 'rgba(169,189,213,0.2)', borderWidth: 1 }
+          },
+          scales: {
+            x: { ticks: { color: CHART_TEXT }, grid: { display: false } },
+            y: { beginAtZero: true, ticks: { precision: 0, color: CHART_TEXT }, grid: { color: CHART_GRID } }
+          }
         }
       });
     }
@@ -209,7 +220,8 @@
       const chartSources = (d.chart_institutions && d.chart_institutions.length) ? d.chart_institutions : insts;
       const chartInsts = chartSources.slice(0, 20);
       const pcts = chartInsts.map(fillPct);
-      fillChart.data.labels = chartInsts.map(i => pick(i, 'name', 'institution_name', 'aicte_id'));
+      fillChartFullLabels = chartInsts.map(i => String(pick(i, 'name', 'institution_name', 'aicte_id') || 'Institution'));
+      fillChart.data.labels = fillChartFullLabels.map(name => name.length > 20 ? name.slice(0, 19).trimEnd() + '…' : name);
       fillChart.data.datasets[0].data = pcts.map(p => Math.round(p * 10) / 10);
       fillChart.data.datasets[0].backgroundColor = pcts.map(fillColor);
       fillChart.update('none');
@@ -224,41 +236,7 @@
       flagChart.update('none');
     }
 
-    // ranking table: lowest compliance first
-    if ($('rank-body')) {
-      const ranked = insts.slice().sort((a, b) =>
-        Number(pick(a, 'compliance_score') ?? 100) - Number(pick(b, 'compliance_score') ?? 100));
-      const startIdx = ((d.page || 1) - 1) * (d.page_size || 50);
-      $('rank-body').innerHTML = ranked.length ? ranked.map((i, n) => {
-        const p = fillPct(i), sc = Number(pick(i, 'compliance_score') ?? 0);
-        const id = pick(i, 'id', 'institution_id');
-        return '<tr class="border-b">' +
-          '<td class="py-2 pr-3 text-slate-400">' + (startIdx + n + 1) + '</td>' +
-          '<td class="py-2 pr-3 font-medium">' + esc(pick(i, 'name', 'institution_name')) + '</td>' +
-          '<td class="py-2 pr-3">' + esc(pick(i, 'state')) + '</td>' +
-          '<td class="py-2 pr-3 font-semibold" style="color:' + fillColor(p) + '">' + p.toFixed(0) + '%</td>' +
-          '<td class="py-2 pr-3">' + esc(pick(i, 'open_flags', 'open_flags_count') ?? 0) + '</td>' +
-          '<td class="py-2 pr-3 font-bold ' + scoreClass(sc) + '">' + sc + '</td>' +
-          '<td class="py-2 text-right"><a class="text-indigo-700 underline" href="/aicte/institutions/' + esc(id) + '">Drill down</a></td>' +
-          '</tr>';
-      }).join('') : '<tr><td colspan="7" class="py-6 text-center text-slate-400">No institutions match the filters.</td></tr>';
 
-      // Table pagination info & buttons
-      const curPage = d.page || 1;
-      const totalPages = d.total_pages || 1;
-      const totalMatched = d.total_matched !== undefined ? d.total_matched : insts.length;
-      if ($('rank-page-info')) {
-        $('rank-page-info').textContent = 'Page ' + curPage + ' of ' + totalPages + ' (' + totalMatched + ' institutions)';
-      }
-      if ($('rank-prev')) {
-        $('rank-prev').disabled = curPage <= 1;
-        $('rank-prev').onclick = () => load(curPage - 1);
-      }
-      if ($('rank-next')) {
-        $('rank-next').disabled = curPage >= totalPages;
-        $('rank-next').onclick = () => load(curPage + 1);
-      }
-    }
 
     // alerts panel
     if ($('high-flags')) {

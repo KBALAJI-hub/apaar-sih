@@ -1,42 +1,57 @@
 {% extends "base.html" %}
+{% block title %}ApaarAnvaya · Trusted academic credentials{% endblock %}
 
 {% block content %}
-<div class="bg-white rounded-xl shadow-sm border border-gray-200 p-8 sm:p-12 text-center max-w-3xl mx-auto mt-8">
-    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 mb-6">
-        <span>Smart India Hackathon &bull; AICTE PS 26263</span>
-    </div>
-    <h1 class="text-3xl sm:text-4xl font-extrabold text-gray-900 mb-4 tracking-tight">
-        Welcome to APAAR Verify
-    </h1>
-    <p class="text-gray-600 text-base sm:text-lg mb-8 max-w-xl mx-auto leading-relaxed">
-        An APAAR ID-based Student Data Management and Verification Platform for AICTE institutions, regulators, verifiers, and students.
-    </p>
-    <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-8">
-        <a href="/login" class="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 border border-transparent text-base font-semibold rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition">
-            Sign In / Quick Demo Login
-        </a>
-        <a href="/verify" class="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 border border-gray-300 text-base font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 shadow-sm transition">
-            Verify Student Record
-        </a>
+<div class="landing-page">
+  <section class="landing-hero">
+    <div class="landing-copy">
+      <h1>Academic credentials.<br><span class="gradient-ink">Made verifiable.</span></h1>
+      <p class="landing-lede">A trusted digital gateway for student records, institution compliance, and consent-led credential checks across India's academic ecosystem.</p>
+      <div class="landing-actions">
+        <a href="/login" class="primary-action">Enter the demo <span>→</span></a>
+        <a href="/verify" class="secondary-action">Verify a credential <span>↗</span></a>
+      </div>
+      <div class="landing-assurance">
+        <span class="assurance-icon">✓</span>
+        <span><strong>Cryptographic integrity</strong><small>Ed25519 signed · SHA-256 audit chain</small></span>
+      </div>
     </div>
 
-    <!-- Direct Portal Shortcuts -->
-    <div class="pt-6 border-t border-gray-200">
-        <div class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Portal Direct Shortcuts</div>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
-            <a href="/aicte/dashboard" class="p-3 rounded-lg border border-gray-200 hover:border-indigo-300 hover:bg-indigo-50/40 transition">
-                <div class="text-xs font-bold text-indigo-900">AICTE Regulator &rarr;</div>
-                <div class="text-[11px] text-gray-500">Live analytics, flags &amp; duplicate detection</div>
-            </a>
-            <a href="/institution" class="p-3 rounded-lg border border-gray-200 hover:border-blue-300 hover:bg-blue-50/40 transition">
-                <div class="text-xs font-bold text-blue-900">Institution Portal &rarr;</div>
-                <div class="text-[11px] text-gray-500">CSV upload, intake caps &amp; student registry</div>
-            </a>
-            <a href="/report" class="p-3 rounded-lg border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50/40 transition">
-                <div class="text-xs font-bold text-emerald-900">Regulatory Reports &rarr;</div>
-                <div class="text-[11px] text-gray-500">Official compliance metrics &amp; CSV exports</div>
-            </a>
-        </div>
+    <div class="network-art" role="img" aria-label="Diagram showing institution records moving through consent-aware credential verification">
+      <div class="network-grid"></div>
+      <svg class="network-lines" viewBox="70 70 380 325" fill="none" aria-hidden="true">
+        <path class="network-path network-path--one" pathLength="100" d="M92 235 196 132 308 179 421 91"/>
+        <path class="network-path network-path--two" pathLength="100" d="m196 132 20 175 126 67 79-283"/>
+        <path class="network-path network-path--three" pathLength="100" d="m92 235 124 72 92-128 113 195"/>
+        <circle class="network-node" cx="92" cy="235" r="5"/><circle class="network-node" cx="196" cy="132" r="5"/>
+        <circle class="network-node network-node--bright" cx="308" cy="179" r="7"/><circle class="network-node" cx="421" cy="91" r="5"/>
+        <circle class="network-node" cx="216" cy="307" r="5"/><circle class="network-node" cx="342" cy="374" r="5"/>
+        <circle class="network-node" cx="421" cy="374" r="5"/>
+      </svg>
+      <div class="network-label network-label--one"><span>01</span> Institution</div>
+      <div class="network-label network-label--two"><span>02</span> Student record</div>
+      <div class="network-label network-label--three"><span>03</span> Trusted verification</div>
+      <div class="network-status"><i></i> SECURE RECORD NETWORK <span>DEMO</span></div>
     </div>
+  </section>
+
+  <section class="landing-pillars" aria-label="Platform workspaces">
+    <article class="pillar-card">
+      <h2>See the whole picture</h2>
+      <p>Monitor approved intake, enrollment patterns, and validation flags in one regulator view.</p>
+      <a href="/login">AICTE workspace <span>→</span></a>
+    </article>
+    <article class="pillar-card">
+      <h2>Keep records accountable</h2>
+      <p>Submit student records and surface intake or identity issues for administrative review.</p>
+      <a href="/login">Institution workspace <span>→</span></a>
+    </article>
+    <article class="pillar-card">
+      <h2>Verify with consent</h2>
+      <p>Demonstrate credential authenticity while respecting a student's chosen disclosure level.</p>
+      <a href="/verify">Open verification <span>→</span></a>
+    </article>
+  </section>
+  <p class="landing-disclosure">Prototype disclosure: the APAAR registry and OTP shown in this demo are simulated integrations.</p>
 </div>
 {% endblock %}
