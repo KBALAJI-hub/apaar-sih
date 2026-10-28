@@ -77,8 +77,13 @@
                 </thead>
                 <tbody class="divide-y divide-gray-100">
                     {% for stu in students %}
-                    <tr class="hover:bg-gray-50 transition">
-                        <td class="px-6 py-3.5 font-mono text-gray-900 font-medium">{{ stu.student_id }}</td>
+                    <tr id="student-row-{{ stu.id }}" class="hover:bg-gray-50 transition {% if highlight_id and stu.id == highlight_id %}bg-indigo-50/70 border-l-4 border-l-indigo-600 ring-1 ring-indigo-200{% endif %}">
+                        <td class="px-6 py-3.5 font-mono text-gray-900 font-medium">
+                            {{ stu.student_id }}
+                            {% if highlight_id and stu.id == highlight_id %}
+                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-100 text-indigo-700 ml-1.5">Inspected</span>
+                            {% endif %}
+                        </td>
                         <td class="px-6 py-3.5 font-medium text-gray-900">
                             {{ stu.full_name }}
                             <div class="text-xs text-gray-400 font-normal">DOB: {{ stu.dob }} &bull; {{ stu.gender }}</div>
@@ -179,4 +184,15 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  {% if highlight_id %}
+  const targetRow = document.getElementById('student-row-{{ highlight_id }}');
+  if (targetRow) {
+    targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  {% endif %}
+</script>
 {% endblock %}
