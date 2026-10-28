@@ -1,9 +1,10 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.database import create_db_and_tables, check_db_connection
 from app.auth import router as auth_router
@@ -34,9 +35,6 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 # Configure Jinja2 templates pointing to app/templates
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Register router modules
 app.include_router(auth_router)

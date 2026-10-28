@@ -37,7 +37,6 @@ def _settings(session: Session) -> dict[str, str]:
     return values
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 def _csv_response(filename: str, headers: list[str], rows: list[list[object]]) -> Response:
@@ -673,20 +672,15 @@ def _render_institutions_directory(
     )
 
 
-@router.get("/reports/compliance-summary", response_class=HTMLResponse)
+@router.get("/reports/compliance-summary", response_class=RedirectResponse)
 def compliance_summary(
     request: Request,
-    search: Optional[str] = Query(default=None),
-    state: Optional[str] = Query(default=None),
-    institution_type: Optional[str] = Query(default=None),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=10, ge=1, le=200),
-    limit: Optional[int] = Query(default=None),
     user: User = Depends(require_role("AICTE_ADMIN")),
-    session: Session = Depends(get_session),
 ):
-    eff_page_size = min(max(1, limit), 200) if limit is not None else page_size
-    return _render_compliance_summary(request, session, user, search, state, institution_type, page, eff_page_size)
+    """Canonical redirect from legacy /reports/compliance-summary to unified reports portal."""
+    query = request.url.query
+    dest = "/aicte/reports?tab=compliance" + (f"&{query}" if query else "")
+    return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @router.get("/reports", response_class=HTMLResponse)
