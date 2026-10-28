@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Flags · APAAR Verify{% endblock %}
+{% block title %}Flags · ApaarAnvaya{% endblock %}
 
 {% block content %}
 <div class="flex items-center justify-between mb-4">
@@ -27,8 +27,15 @@
     <tbody>
       {% for f in flags or [] %}
       <tr class="border-b flag-row" data-sev="{{ f.severity }}">
-        <td class="py-2 pr-4"><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
-        <td class="py-2 pr-4">{{ f.rule_code }}</td>
+        <td class="py-2 pr-4">
+          <span class="validation-chip validation-chip--{{ f.severity|lower }}">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.3 3.9 1.9 18a2 2 0 001.7 3h16.8a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"></path>
+            </svg>
+            {{ f.severity }}
+          </span>
+        </td>
+        <td class="py-2 pr-4"><span class="rounded-md border border-white/10 bg-white/5 px-2 py-1 font-mono text-xs">{{ f.rule_code }}</span></td>
         <td class="py-2 pr-4">{{ f.student_id or '-' }}</td>
         <td class="py-2 pr-4">{{ f.message }}</td>
         <td class="py-2 pr-4 text-slate-600">{{ f.recommended_action }}</td>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}My consent · APAAR Verify{% endblock %}
+{% block title %}My consent · ApaarAnvaya{% endblock %}
 
 {% block content %}
 <div class="max-w-3xl mx-auto space-y-6">
@@ -104,7 +104,7 @@
 
             <div class="space-y-3">
                 <!-- Tier 2 -->
-                <label class="flex items-start gap-3 p-3.5 rounded-lg border {% if student.consent_level == 2 %}border-emerald-500 bg-emerald-50/30 ring-1 ring-emerald-500{% else %}border-gray-200 hover:bg-gray-50{% endif %} cursor-pointer transition">
+                <label class="flex items-start gap-3 p-3.5 rounded-lg border {% if student.consent_level == 2 %}border-emerald-500 bg-emerald-50/30 ring-1 ring-emerald-500{% else %}border-gray-200{% endif %} cursor-pointer transition">
                     <input type="radio" name="consent_level" value="2" {% if student.consent_level == 2 %}checked{% endif %} class="mt-1 text-emerald-600 focus:ring-emerald-500">
                     <div>
                         <div class="text-sm font-bold text-gray-900">Tier 2: Full Record & Authenticity Badge (Recommended)</div>
@@ -113,7 +113,7 @@
                 </label>
 
                 <!-- Tier 1 -->
-                <label class="flex items-start gap-3 p-3.5 rounded-lg border {% if student.consent_level == 1 %}border-blue-500 bg-blue-50/30 ring-1 ring-blue-500{% else %}border-gray-200 hover:bg-gray-50{% endif %} cursor-pointer transition">
+                <label class="flex items-start gap-3 p-3.5 rounded-lg border {% if student.consent_level == 1 %}border-blue-500 bg-blue-50/30 ring-1 ring-blue-500{% else %}border-gray-200{% endif %} cursor-pointer transition">
                     <input type="radio" name="consent_level" value="1" {% if student.consent_level == 1 %}checked{% endif %} class="mt-1 text-blue-600 focus:ring-blue-500">
                     <div>
                         <div class="text-sm font-bold text-gray-900">Tier 1: Directory Verification Only</div>
@@ -122,7 +122,7 @@
                 </label>
 
                 <!-- Tier 0 -->
-                <label class="flex items-start gap-3 p-3.5 rounded-lg border {% if student.consent_level == 0 %}border-amber-500 bg-amber-50/30 ring-1 ring-amber-500{% else %}border-gray-200 hover:bg-gray-50{% endif %} cursor-pointer transition">
+                <label class="flex items-start gap-3 p-3.5 rounded-lg border {% if student.consent_level == 0 %}border-amber-500 bg-amber-50/30 ring-1 ring-amber-500{% else %}border-gray-200{% endif %} cursor-pointer transition">
                     <input type="radio" name="consent_level" value="0" {% if student.consent_level == 0 %}checked{% endif %} class="mt-1 text-amber-600 focus:ring-amber-500">
                     <div>
                         <div class="text-sm font-bold text-gray-900">Tier 0: Revoke All Consent</div>

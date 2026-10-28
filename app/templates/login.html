@@ -1,108 +1,72 @@
 {% extends "base.html" %}
-{% block title %}Login · APAAR Verify{% endblock %}
+{% block title %}Secure sign in · ApaarAnvaya{% endblock %}
 
 {% block content %}
-<div class="max-w-md mx-auto bg-white rounded-xl shadow-lg border border-gray-100 p-8 mt-6">
-  <h1 class="text-2xl font-bold text-indigo-900 mb-1">Sign in</h1>
-  <p class="text-sm text-slate-500 mb-6">AICTE regulator, institution, verifier and student accounts</p>
+<div class="auth-layout">
+  <section class="auth-story">
+    <div class="page-eyebrow"><span class="eyebrow-dot"></span> NATIONAL ACADEMIC CREDENTIAL NETWORK</div>
+    <h1>Trust, built into<br><span class="gradient-ink">every record.</span></h1>
+    <p>A secure workspace for student records, institution compliance, and consent-led credential verification.</p>
 
-  <!-- Error message -->
-  {% if error %}
-    <div class="mb-4 px-4 py-2.5 rounded-lg border bg-red-50 border-red-300 text-red-800 text-sm">
+    <div class="trust-points">
+      <div><span class="trust-check">✓</span><span><strong>Integrity by design</strong><small>Signed credentials and tamper-evident audit records</small></span></div>
+      <div><span class="trust-check">✓</span><span><strong>Privacy-aware verification</strong><small>Disclosure follows the student's consent level</small></span></div>
+    </div>
+    <p class="prototype-note">SIH PS 26263 · Demonstration prototype. Registry and OTP flows are simulated.</p>
+  </section>
+
+  <section class="auth-card">
+    <div class="auth-card-heading">
+      <span class="auth-card-icon" aria-hidden="true">↗</span>
+      <div>
+        <div class="page-eyebrow">SECURE ACCESS</div>
+        <h2>Welcome back</h2>
+        <p>Sign in to your authorized workspace.</p>
+      </div>
+    </div>
+
+    {% if error %}
+    <div class="auth-error" role="alert">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       {{ error }}
     </div>
-  {% endif %}
+    {% endif %}
 
-  <!-- Field names (username, password) match POST /login handler -->
-  <form id="login-form" method="post" action="/login" class="space-y-4">
-    <div>
-      <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
-      <input id="username" name="username" type="text" required autofocus
-             class="w-full border border-gray-300 rounded-lg px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
+    <form id="login-form" method="post" action="/login" class="auth-form">
+      <label for="username">Username
+        <input id="username" name="username" type="text" required autofocus autocomplete="username" placeholder="Enter your username">
+      </label>
+      <label for="password">Password
+        <input id="password" name="password" type="password" required autocomplete="current-password" placeholder="Enter your password">
+      </label>
+      <button type="submit" class="auth-submit">Sign in securely <span aria-hidden="true">→</span></button>
+    </form>
+
+    <div class="demo-access">
+      <div class="demo-access-heading"><span>DEMO ACCESS</span><i>PRE-SEEDED ACCOUNTS</i></div>
+      <div class="demo-role-grid">
+        <button type="button" class="demo-role demo-role--admin" onclick="quickFill('aicte_admin', 'Admin@123')">
+          <span class="role-symbol">A</span><span><strong>AICTE Admin</strong><small>National oversight</small></span><b>↗</b>
+        </button>
+        <button type="button" class="demo-role demo-role--institution" onclick="quickFill('inst1', 'Inst@123')">
+          <span class="role-symbol">I</span><span><strong>Institution</strong><small>Enrollment workspace</small></span><b>↗</b>
+        </button>
+        <button type="button" class="demo-role demo-role--verifier" onclick="quickFill('employer1', 'Verify@123')">
+          <span class="role-symbol">V</span><span><strong>Verifier</strong><small>Credential checks</small></span><b>↗</b>
+        </button>
+        <button type="button" class="demo-role demo-role--student" onclick="quickFill('student1', 'Student@123')">
+          <span class="role-symbol">S</span><span><strong>Student</strong><small>Consent & privacy</small></span><b>↗</b>
+        </button>
+      </div>
     </div>
-    <div>
-      <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
-      <input id="password" name="password" type="password" required
-             class="w-full border border-gray-300 rounded-lg px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition">
-    </div>
-    <button type="submit"
-            class="w-full bg-indigo-700 hover:bg-indigo-800 text-white font-semibold py-2.5 rounded-lg shadow-sm transition">
-      Login
-    </button>
-  </form>
-
-  <!-- 1-Click Quick Demo Login Section -->
-  <div class="mt-8 pt-6 border-t border-gray-200">
-    <div class="flex items-center justify-between mb-3">
-      <span class="text-xs font-semibold uppercase tracking-wider text-gray-500">Quick 1-Click Demo Login</span>
-      <span class="text-[11px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full font-medium">Pre-seeded</span>
-    </div>
-
-    <div class="space-y-2">
-      <!-- AICTE Admin Quick Login -->
-      <button type="button" onclick="quickFill('aicte_admin', 'Admin@123')"
-              class="w-full flex items-center justify-between p-2.5 rounded-lg border border-indigo-200 bg-indigo-50/60 hover:bg-indigo-100/70 text-left transition group">
-        <div>
-          <div class="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
-            <span class="inline-block w-2 h-2 rounded-full bg-indigo-600"></span>
-            AICTE Admin
-          </div>
-          <div class="text-[11px] text-indigo-700">aicte_admin &bull; Central Regulator</div>
-        </div>
-        <span class="text-xs font-semibold text-indigo-700 group-hover:underline">1-Click Login &rarr;</span>
-      </button>
-
-      <!-- Institution Quick Login -->
-      <button type="button" onclick="quickFill('inst1', 'Inst@123')"
-              class="w-full flex items-center justify-between p-2.5 rounded-lg border border-blue-200 bg-blue-50/60 hover:bg-blue-100/70 text-left transition group">
-        <div>
-          <div class="text-xs font-bold text-blue-950 flex items-center gap-1.5">
-            <span class="inline-block w-2 h-2 rounded-full bg-blue-600"></span>
-            Institution Admin
-          </div>
-          <div class="text-[11px] text-blue-700">inst1 &bull; Delhi Tech (Engineering)</div>
-        </div>
-        <span class="text-xs font-semibold text-blue-700 group-hover:underline">1-Click Login &rarr;</span>
-      </button>
-
-      <!-- Verifier Quick Login -->
-      <button type="button" onclick="quickFill('employer1', 'Verify@123')"
-              class="w-full flex items-center justify-between p-2.5 rounded-lg border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100/70 text-left transition group">
-        <div>
-          <div class="text-xs font-bold text-emerald-950 flex items-center gap-1.5">
-            <span class="inline-block w-2 h-2 rounded-full bg-emerald-600"></span>
-            Verifier Portal
-          </div>
-          <div class="text-[11px] text-emerald-700">employer1 &bull; TCS Recruiter</div>
-        </div>
-        <span class="text-xs font-semibold text-emerald-700 group-hover:underline">1-Click Login &rarr;</span>
-      </button>
-
-      <!-- Student Quick Login -->
-      <button type="button" onclick="quickFill('student1', 'Student@123')"
-              class="w-full flex items-center justify-between p-2.5 rounded-lg border border-purple-200 bg-purple-50/60 hover:bg-purple-100/70 text-left transition group">
-        <div>
-          <div class="text-xs font-bold text-purple-950 flex items-center gap-1.5">
-            <span class="inline-block w-2 h-2 rounded-full bg-purple-600"></span>
-            Student Portal
-          </div>
-          <div class="text-[11px] text-purple-700">student1 &bull; Linked APAAR ID</div>
-        </div>
-        <span class="text-xs font-semibold text-purple-700 group-hover:underline">1-Click Login &rarr;</span>
-      </button>
-    </div>
-  </div>
-
-  <p class="text-xs text-slate-500 mt-6 text-center">
-    Student OTP sign-in? <a href="/student/consent" class="text-indigo-700 font-medium underline">Sign in with APAAR ID &amp; OTP</a>
-  </p>
+    <div class="auth-footnote">Student access? <a href="/student/consent">Continue with APAAR ID &amp; demo OTP <span aria-hidden="true">→</span></a></div>
+  </section>
 </div>
-
 <script>
 function quickFill(user, pass) {
   document.getElementById('username').value = user;
   document.getElementById('password').value = pass;
-  document.getElementById('login-form').submit();
+  document.getElementById('login-form').requestSubmit();
 }
 </script>
 {% endblock %}

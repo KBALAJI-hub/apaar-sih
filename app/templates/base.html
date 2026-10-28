@@ -3,124 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>APAAR Verify: AICTE Student Data Platform</title>
-
-    <!-- Tailwind CSS CDN -->
+    <meta name="theme-color" content="#0b111b">
+    <title>{% block title %}ApaarAnvaya · AICTE Student Data Platform{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
-    <style>
-        /* Severity badges */
-        .badge-high {
-            background-color: #fee2e2;
-            color: #991b1b;
-            border: 1px solid #f87171;
-            padding: 0.15rem 0.5rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-        }
-        .badge-medium {
-            background-color: #fef3c7;
-            color: #92400e;
-            border: 1px solid #fbbf24;
-            padding: 0.15rem 0.5rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-        }
-        .badge-low {
-            background-color: #dbeafe;
-            color: #1e40af;
-            border: 1px solid #60a5fa;
-            padding: 0.15rem 0.5rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-        }
-    </style>
+    <link rel="stylesheet" href="/static/style.css">
     {% block head %}{% endblock %}
 </head>
-<body class="bg-gray-50 min-h-screen text-gray-900 flex flex-col font-sans">
-    <!-- Top Navbar -->
-    <nav class="bg-white border-b border-gray-200 px-6 py-4 shadow-sm">
-        <div class="max-w-7xl mx-auto flex items-center justify-between">
-            <div class="flex items-center space-x-3">
-                <a href="/" class="text-xl font-bold text-indigo-700 tracking-tight hover:text-indigo-800">
-                    APAAR Verify: AICTE Student Data Platform
-                </a>
-            </div>
+<body class="app-body">
+    <div class="ambient-aura" aria-hidden="true"></div>
+    <div class="app-shell {% if role %}app-shell--authenticated{% else %}app-shell--public{% endif %}">
+        {% if role %}
+        <aside class="app-sidebar">
+            <a href="/" class="brand-lockup" aria-label="ApaarAnvaya home">
+                <span class="brand-emblem" aria-hidden="true">
+                    <svg viewBox="0 0 40 40" fill="none">
+                        <path d="M20 3.5 34 9v9.2c0 8.2-5.7 14.1-14 18.3C11.7 32.3 6 26.4 6 18.2V9l14-5.5Z" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="m13.5 20.5 4.2 4.2 8.8-9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        <circle class="emblem-orbit" cx="30.5" cy="9" r="2"/>
+                    </svg>
+                </span>
+                <span class="brand-copy"><strong>Apaar<span>Anvaya</span></strong><small>AICTE CREDENTIAL NETWORK</small></span>
+            </a>
 
-            <!-- Placeholder area for role-based links -->
-            <div id="role-nav-links" class="flex items-center space-x-4 text-sm font-medium">
+            <div class="sidebar-caption">WORKSPACE</div>
+            <nav class="sidebar-nav" aria-label="Main navigation">
                 {% if role == 'AICTE_ADMIN' %}
-                    <a href="/aicte/dashboard" class="text-gray-700 hover:text-indigo-600">AICTE Dashboard</a>
-                    <a href="/aicte/institutions" class="text-gray-700 hover:text-indigo-600 font-medium">Institutions</a>
-                    <a href="/aicte/reports" class="text-gray-700 hover:text-indigo-600 font-medium">Reports</a>
-                    <a href="/aicte/settings" class="text-gray-700 hover:text-indigo-600">Settings</a>
-                    <a href="/aicte/audit" class="text-gray-700 hover:text-indigo-600">Audit Logs</a>
-                    <a href="/logout" class="text-red-600 hover:text-red-700">Logout</a>
+                    <a href="/aicte/dashboard" class="sidebar-link" {% if request.url.path == '/aicte/dashboard' %}aria-current="page"{% endif %}><span class="nav-glyph">◫</span> National overview</a>
+                    <a href="/aicte/institutions" class="sidebar-link" {% if request.url.path == '/aicte/institutions' %}aria-current="page"{% endif %}><span class="nav-glyph">▦</span> Institutions</a>
+                    <a href="/aicte/reports" class="sidebar-link" {% if request.url.path == '/aicte/reports' %}aria-current="page"{% endif %}><span class="nav-glyph">▤</span> Reports</a>
+                    <div class="sidebar-caption sidebar-caption--spaced">GOVERNANCE</div>
+                    <a href="/aicte/settings" class="sidebar-link" {% if request.url.path == '/aicte/settings' %}aria-current="page"{% endif %}><span class="nav-glyph">⚙</span> Policy settings</a>
+                    <a href="/aicte/audit" class="sidebar-link" {% if request.url.path == '/aicte/audit' %}aria-current="page"{% endif %}><span class="nav-glyph">⌁</span> Audit trail</a>
                 {% elif role == 'INSTITUTION' %}
-                    <a href="/institution/dashboard" class="text-gray-700 hover:text-indigo-600">Dashboard</a>
-                    <a href="/institution/students" class="text-gray-700 hover:text-indigo-600">Students</a>
-                    <a href="/institution/students/new" class="text-gray-700 hover:text-indigo-600">Add Student</a>
-                    <a href="/logout" class="text-red-600 hover:text-red-700">Logout</a>
+                    <a href="/institution/dashboard" class="sidebar-link" {% if request.url.path == '/institution/dashboard' %}aria-current="page"{% endif %}><span class="nav-glyph">◫</span> Overview</a>
+                    <a href="/institution/students" class="sidebar-link" {% if request.url.path == '/institution/students' %}aria-current="page"{% endif %}><span class="nav-glyph">♙</span> Student records</a>
+                    <a href="/institution/students/new" class="sidebar-link" {% if request.url.path == '/institution/students/new' %}aria-current="page"{% endif %}><span class="nav-glyph">＋</span> Add student</a>
+                    <a href="/institution/upload" class="sidebar-link" {% if request.url.path == '/institution/upload' %}aria-current="page"{% endif %}><span class="nav-glyph">↥</span> Secure upload</a>
                 {% elif role == 'VERIFIER' %}
-                    <a href="/verify" class="text-gray-700 hover:text-indigo-600">Verification Portal</a>
-                    <a href="/logout" class="text-red-600 hover:text-red-700">Logout</a>
+                    <a href="/verify" class="sidebar-link" {% if request.url.path == '/verify' %}aria-current="page"{% endif %}><span class="nav-glyph">⌕</span> Verification portal</a>
                 {% elif role == 'STUDENT' %}
-                    <a href="/student/dashboard" class="text-indigo-700 font-semibold hover:text-indigo-900">Student Dashboard</a>
-                    <a href="/student/consent" class="text-gray-700 hover:text-indigo-600">Privacy & Consent</a>
-                    <a href="/logout" class="text-red-600 hover:text-red-700">Logout</a>
-                {% else %}
-                    <!-- Public / Unauthenticated links -->
-                    <a href="/" class="text-gray-600 hover:text-indigo-600">Home</a>
-                    <a href="/verify" class="text-gray-600 hover:text-indigo-600">Verify</a>
-                    <a href="/institution" class="text-gray-600 hover:text-indigo-600">Institution</a>
-                    <a href="/report" class="text-gray-600 hover:text-indigo-600">Reports</a>
-                    <a href="/login" class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700">Login</a>
+                    <a href="/student/dashboard" class="sidebar-link" {% if request.url.path == '/student/dashboard' %}aria-current="page"{% endif %}><span class="nav-glyph">◫</span> My dashboard</a>
+                    <a href="/student/consent" class="sidebar-link" {% if request.url.path == '/student/consent' %}aria-current="page"{% endif %}><span class="nav-glyph">◈</span> Privacy & consent</a>
+                {% endif %}
+            </nav>
+
+            <div class="sidebar-spacer"></div>
+            <div class="sidebar-security">
+                <span class="security-orb" aria-hidden="true"></span>
+                <div><strong>Protected workspace</strong><small>Role-based access enabled</small></div>
+            </div>
+            <div class="sidebar-user">
+                <span class="user-avatar">{{ (user.full_name[0] if user and user.full_name else role[0])|upper }}</span>
+                <span class="user-copy"><strong>{{ user.full_name if user and user.full_name else role|replace('_', ' ')|title }}</strong><small>{{ role|replace('_', ' ')|title }}</small></span>
+                <a class="logout-link" href="/logout" aria-label="Sign out" title="Sign out">↗</a>
+            </div>
+        </aside>
+        {% endif %}
+
+        <div class="app-primary">
+            <header class="workspace-header">
+                <div class="workspace-context">
+                    <span class="context-mark"></span>
+                    <span>{% if role == 'AICTE_ADMIN' %}National Regulatory Workspace{% elif role == 'INSTITUTION' %}Institution Workspace{% elif role == 'VERIFIER' %}Credential Verification{% elif role == 'STUDENT' %}Student Privacy Workspace{% else %}ApaarAnvaya · National Academic Credential Network{% endif %}</span>
+                </div>
+                <div class="workspace-status">
+                    <span class="demo-indicator"><i></i> DEMO ENVIRONMENT</span>
+                    {% if not role %}
+                    <a href="/" class="header-link">Home</a>
+                    <a href="/verify" class="header-link">Verify a record</a>
+                    <a href="/login" class="header-login">Sign in <span aria-hidden="true">→</span></a>
+                    {% endif %}
+                </div>
+            </header>
+
+            <div id="flash-message-area" class="flash-wrap">
+                {% if flash_message %}
+                    <div class="flash-message flash-message--{{ flash_type or 'info' }}" role="status">{{ flash_message }}</div>
+                {% elif message %}
+                    <div class="flash-message flash-message--info" role="status">{{ message }}</div>
                 {% endif %}
             </div>
-        </div>
-    </nav>
 
-    <!-- Flash-Message Area -->
-    <div id="flash-message-area" class="max-w-7xl mx-auto px-6 pt-4 w-full">
-        {% if flash_message %}
-            <div class="p-4 mb-4 text-sm rounded-lg border {% if flash_type == 'error' %}bg-red-50 text-red-800 border-red-200{% elif flash_type == 'success' %}bg-green-50 text-green-800 border-green-200{% else %}bg-blue-50 text-blue-800 border-blue-200{% endif %}">
-                {{ flash_message }}
-            </div>
-        {% elif message %}
-            <div class="p-4 mb-4 text-sm text-blue-800 rounded-lg bg-blue-50 border border-blue-200">
-                {{ message }}
-            </div>
-        {% endif %}
+            <main class="site-main">
+                {% block content %}
+                <section class="surface-panel empty-state">
+                    <h1>ApaarAnvaya</h1>
+                    <p>Welcome to the AICTE student data platform.</p>
+                </section>
+                {% endblock %}
+            </main>
+            <footer class="site-footer">
+                <span>AICTE SIH PS 26263 · Prototype</span>
+                <span>ApaarAnvaya <i class="footer-dot"></i> Trust through verifiable records</span>
+            </footer>
+        </div>
     </div>
-
-    <!-- Main Content Block -->
-    <main class="flex-1 max-w-7xl mx-auto px-6 py-6 w-full">
-        {% block content %}
-        <!-- Default content fallback -->
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center max-w-2xl mx-auto mt-8">
-            <h1 class="text-2xl font-bold text-gray-900 mb-2">APAAR Verify Platform</h1>
-            <p class="text-gray-600">Welcome to AICTE Student Data Platform.</p>
-        </div>
-        {% endblock %}
-    </main>
-
-    <!-- Footer -->
-    <footer class="bg-white border-t border-gray-200 py-4 text-center text-xs text-gray-500 mt-auto">
-        AICTE SIH PS 26263 Prototype &bull; APAAR Verify
-    </footer>
-
     {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Student Dashboard · {{ student.full_name if student else 'Student' }} · APAAR Verify{% endblock %}
+{% block title %}Student Dashboard · {{ student.full_name if student else 'Student' }} · ApaarAnvaya{% endblock %}
 
 {% block content %}
 <div class="space-y-6 max-w-7xl mx-auto">
@@ -127,7 +127,7 @@
                     <form method="POST" action="/student/dashboard/consent" class="space-y-3">
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
                             <!-- Tier 0 -->
-                            <label class="relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition hover:bg-gray-50 {% if student and student.consent_level == 0 %}border-amber-500 bg-amber-50/40{% else %}border-gray-200{% endif %}">
+                            <label class="relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition {% if student and student.consent_level == 0 %}border-amber-500 bg-amber-50/40{% else %}border-gray-200{% endif %}">
                                 <div class="flex items-center justify-between mb-2">
                                     <span class="text-xs font-bold text-amber-700">TIER 0</span>
                                     <input type="radio" name="consent_level" value="0" {% if student and student.consent_level == 0 %}checked{% endif %} class="text-indigo-600 focus:ring-indigo-500">
@@ -137,7 +137,7 @@
                             </label>
 
                             <!-- Tier 1 -->
-                            <label class="relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition hover:bg-gray-50 {% if student and student.consent_level == 1 %}border-blue-500 bg-blue-50/40{% else %}border-gray-200{% endif %}">
+                            <label class="relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition {% if student and student.consent_level == 1 %}border-blue-500 bg-blue-50/40{% else %}border-gray-200{% endif %}">
                                 <div class="flex items-center justify-between mb-2">
                                     <span class="text-xs font-bold text-blue-700">TIER 1</span>
                                     <input type="radio" name="consent_level" value="1" {% if student and student.consent_level == 1 %}checked{% endif %} class="text-indigo-600 focus:ring-indigo-500">
@@ -147,7 +147,7 @@
                             </label>
 
                             <!-- Tier 2 -->
-                            <label class="relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition hover:bg-gray-50 {% if not student or student.consent_level == 2 %}border-emerald-500 bg-emerald-50/40{% else %}border-gray-200{% endif %}">
+                            <label class="relative flex flex-col p-4 rounded-xl border-2 cursor-pointer transition {% if not student or student.consent_level == 2 %}border-emerald-500 bg-emerald-50/40{% else %}border-gray-200{% endif %}">
                                 <div class="flex items-center justify-between mb-2">
                                     <span class="text-xs font-bold text-emerald-700">TIER 2 (Recommended)</span>
                                     <input type="radio" name="consent_level" value="2" {% if not student or student.consent_level == 2 %}checked{% endif %} class="text-indigo-600 focus:ring-indigo-500">
