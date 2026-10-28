@@ -3,149 +3,296 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 pb-4 border-b border-gray-200">
-        <div>
-            <h1 class="text-2xl font-bold text-gray-900">{{ institution.name }}</h1>
-            <p class="text-sm text-gray-500">AICTE ID: <span class="font-mono font-medium text-gray-700">{{ institution.aicte_id }}</span> &bull; State: {{ institution.state }} &bull; Type: {{ institution.type }}</p>
+    <!-- Header with Institution Identity & Primary Actions -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-xs p-6 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+        <div class="space-y-2">
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    Institution Portal
+                </span>
+                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Verified AICTE Node
+                </span>
+            </div>
+            <h1 class="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">{{ institution.name }}</h1>
+            <div class="flex flex-wrap items-center gap-y-1 gap-x-3 text-xs sm:text-sm text-gray-500">
+                <span>AICTE ID: <strong class="font-mono text-gray-800 font-semibold">{{ institution.aicte_id }}</strong></span>
+                <span class="text-gray-300">&bull;</span>
+                <span>State: <strong class="text-gray-800 font-semibold">{{ institution.state }}</strong></span>
+                <span class="text-gray-300">&bull;</span>
+                <span>Type: <strong class="text-gray-800 font-semibold">{{ institution.type }}</strong></span>
+            </div>
         </div>
-        <div class="flex items-center gap-3">
-            <a href="/institution/upload" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 shadow-sm transition">
-                <svg class="w-4 h-4 mr-1.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-                Upload CSV
-            </a>
-            <a href="/institution/students/new" class="inline-flex items-center px-4 py-2 border border-transparent rounded-lg text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition">
-                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+
+        <div class="flex flex-wrap items-center gap-3 shrink-0">
+            <a href="/institution/students/new"
+               class="inline-flex items-center px-4 py-2.5 border border-transparent rounded-lg text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs transition duration-150">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                </svg>
                 Add Student
+            </a>
+            <a href="/institution/students"
+               class="inline-flex items-center px-4 py-2.5 border border-gray-200 rounded-lg text-sm font-semibold text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100 shadow-xs transition duration-150">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                </svg>
+                Students Directory
             </a>
         </div>
     </div>
 
-    <!-- 5 KPI Cards -->
+    <!-- 5 KPI Cards Grid -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <!-- 1. Total Students -->
-        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Enrolled</div>
-            <div class="mt-2 text-2xl font-extrabold text-gray-900">{{ total_students }}</div>
-            <div class="mt-1 text-xs text-gray-500">Active students</div>
+        <!-- 1. Total Enrolled -->
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-xs hover:border-gray-300 transition">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Total Enrolled</span>
+                <span class="p-1.5 rounded-md bg-indigo-50 text-indigo-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                </span>
+            </div>
+            <div class="mt-3 text-3xl font-extrabold text-gray-900 tracking-tight">{{ total_students }}</div>
+            <div class="mt-1 text-xs text-gray-500 font-medium">Active registered students</div>
         </div>
 
         <!-- 2. Approved Intake -->
-        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Approved Intake</div>
-            <div class="mt-2 text-2xl font-extrabold text-gray-900">{{ approved_intake }}</div>
-            <div class="mt-1 text-xs text-gray-500">Across all programs</div>
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-xs hover:border-gray-300 transition">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Approved Intake</span>
+                <span class="p-1.5 rounded-md bg-blue-50 text-blue-600">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+                </span>
+            </div>
+            <div class="mt-3 text-3xl font-extrabold text-gray-900 tracking-tight">{{ approved_intake }}</div>
+            <div class="mt-1 text-xs text-gray-500 font-medium">Total sanctioned seats</div>
         </div>
 
-        <!-- 3. Fill % -->
-        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Fill Ratio</div>
-            <div class="mt-2 text-2xl font-extrabold {% if fill_ratio > 100 %}text-red-600{% elif fill_ratio >= 90 %}text-amber-600{% else %}text-emerald-600{% endif %}">
+        <!-- 3. Fill Ratio -->
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-xs hover:border-gray-300 transition">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Fill Ratio</span>
+                <span class="p-1.5 rounded-md {% if fill_ratio > 100 %}bg-red-50 text-red-600{% elif fill_ratio >= 90 %}bg-amber-50 text-amber-600{% else %}bg-emerald-50 text-emerald-600{% endif %}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                </span>
+            </div>
+            <div class="mt-3 text-3xl font-extrabold {% if fill_ratio > 100 %}text-red-600{% elif fill_ratio >= 90 %}text-amber-600{% else %}text-emerald-600{% endif %} tracking-tight">
                 {{ fill_ratio }}%
             </div>
-            <div class="mt-1 text-xs text-gray-500">{% if fill_ratio > 100 %}Exceeds AICTE Quota{% else %}Quota utilization{% endif %}</div>
+            <div class="mt-1 text-xs font-medium {% if fill_ratio > 100 %}text-red-600 font-semibold{% else %}text-gray-500{% endif %}">
+                {% if fill_ratio > 100 %}Exceeds AICTE Quota{% elif fill_ratio >= 90 %}Near Quota Capacity{% else %}Quota utilization{% endif %}
+            </div>
         </div>
 
         <!-- 4. Open Flags -->
-        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Open Flags</div>
-            <div class="mt-2 text-2xl font-extrabold {% if open_flags_count > 0 %}text-red-600{% else %}text-emerald-600{% endif %}">
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-xs hover:border-gray-300 transition">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Open Flags</span>
+                <span class="p-1.5 rounded-md {% if open_flags_count > 0 %}bg-red-50 text-red-600{% else %}bg-emerald-50 text-emerald-600{% endif %}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                </span>
+            </div>
+            <div class="mt-3 text-3xl font-extrabold {% if open_flags_count > 0 %}text-red-600{% else %}text-emerald-600{% endif %} tracking-tight">
                 {{ open_flags_count }}
             </div>
-            <div class="mt-1 text-xs text-gray-500">Requires review</div>
+            <div class="mt-1 text-xs font-medium {% if open_flags_count > 0 %}text-red-600 font-semibold{% else %}text-gray-500{% endif %}">
+                {% if open_flags_count > 0 %}Requires review{% else %}Fully compliant{% endif %}
+            </div>
         </div>
 
         <!-- 5. Compliance Score -->
-        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Compliance Score</div>
-            <div class="mt-2 text-2xl font-extrabold {% if compliance_score >= 80 %}text-emerald-600{% elif compliance_score >= 60 %}text-amber-600{% else %}text-red-600{% endif %}">
-                {{ compliance_score }}/100
+        <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-xs hover:border-gray-300 transition">
+            <div class="flex items-center justify-between">
+                <span class="text-xs font-bold text-gray-500 uppercase tracking-wider">Compliance</span>
+                <span class="p-1.5 rounded-md {% if compliance_score >= 80 %}bg-emerald-50 text-emerald-600{% elif compliance_score >= 60 %}bg-amber-50 text-amber-600{% else %}bg-red-50 text-red-600{% endif %}">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                </span>
             </div>
-            <div class="mt-1 text-xs text-gray-500">Institutional health</div>
+            <div class="mt-3 text-3xl font-extrabold {% if compliance_score >= 80 %}text-emerald-600{% elif compliance_score >= 60 %}text-amber-600{% else %}text-red-600{% endif %} tracking-tight">
+                {{ compliance_score }}<span class="text-base font-medium text-gray-400">/100</span>
+            </div>
+            <div class="mt-1 text-xs text-gray-500 font-medium">Institutional health</div>
         </div>
     </div>
 
-    <!-- Intake Quotas by Program -->
-    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h2 class="text-base font-bold text-gray-900">Academic Programs & Intake Status</h2>
-            <span class="text-xs text-gray-500">Real-time seat monitoring</span>
-        </div>
-        <div class="divide-y divide-gray-100">
-            {% for prog in programs_data %}
-            <div class="px-6 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                <div class="space-y-1">
-                    <div class="text-sm font-semibold text-gray-900">{{ prog.name }}</div>
-                    <div class="text-xs text-gray-500">Year: {{ prog.academic_year }} &bull; Level: {{ prog.level }}</div>
+    <!-- Academic Programs & Intake Status with Real-time Filters -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-xs overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-gray-50/50">
+            <div>
+                <h2 class="text-base font-bold text-gray-900">Academic Programs &amp; Intake Status</h2>
+                <p class="text-xs text-gray-500">Real-time enrollment quota meter and AICTE admission decisions</p>
+            </div>
+            <!-- Program Search and Decision Filter Controls -->
+            <div class="flex flex-wrap items-center gap-2.5">
+                <div class="relative">
+                    <input type="text" id="prog-search" placeholder="Search program..."
+                           class="w-44 sm:w-56 pl-8 pr-3 py-1.5 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+                    <svg class="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+                    </svg>
                 </div>
-                <div class="flex items-center gap-6">
-                    <div class="w-48">
-                        <div class="flex justify-between text-xs mb-1">
-                            <span class="text-gray-500">Enrolled: {{ prog.enrolled_regular }} / {{ prog.approved_intake }}</span>
-                            <span class="font-semibold {% if prog.fill_ratio > 1.0 %}text-red-600{% elif prog.fill_ratio >= 0.9 %}text-amber-600{% else %}text-emerald-600{% endif %}">{{ (prog.fill_ratio * 100)|round(1) }}%</span>
+                <select id="prog-decision-filter" class="py-1.5 px-2.5 text-xs border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white text-gray-700">
+                    <option value="">All Decisions</option>
+                    <option value="ALLOW">ALLOW</option>
+                    <option value="WARN">WARN</option>
+                    <option value="BLOCK">BLOCK</option>
+                </select>
+                <span class="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                    {{ programs_data|length }} Programs
+                </span>
+            </div>
+        </div>
+
+        <div id="programs-container" class="divide-y divide-gray-100">
+            {% for prog in programs_data %}
+            <div class="program-item px-6 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4 hover:bg-gray-50/60 transition"
+                 data-name="{{ prog.name|lower }}"
+                 data-decision="{{ prog.decision }}">
+                <div class="space-y-1 max-w-md">
+                    <div class="text-sm font-bold text-gray-900">{{ prog.name }}</div>
+                    <div class="text-xs text-gray-500 flex items-center gap-2">
+                        <span class="bg-gray-100 text-gray-700 px-2 py-0.5 rounded font-medium">{{ prog.level }}</span>
+                        <span>Academic Year: <strong class="text-gray-700">{{ prog.academic_year }}</strong></span>
+                    </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
+                    <!-- Enrollment Bar Meter -->
+                    <div class="w-full sm:w-64">
+                        <div class="flex justify-between items-center text-xs mb-1.5">
+                            <span class="text-gray-600 font-medium">Enrolled: <strong>{{ prog.enrolled_regular }}</strong> / {{ prog.approved_intake }}</span>
+                            <span class="font-bold {% if prog.fill_ratio > 1.0 %}text-red-600{% elif prog.fill_ratio >= 0.9 %}text-amber-600{% else %}text-emerald-600{% endif %}">
+                                {{ (prog.fill_ratio * 100)|round(1) }}%
+                            </span>
                         </div>
-                        <div class="w-full bg-gray-200 rounded-full h-2">
-                           {% set bar_w = [prog.fill_ratio * 100, 100]|min %}
-<div class="h-2 rounded-full {% if prog.fill_ratio > 1.0 %}bg-red-500{% elif prog.fill_ratio >= 0.9 %}bg-amber-500{% else %}bg-emerald-500{% endif %}"
-     data-w="{{ bar_w|round(1) }}"></div>
-                            </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden">
+                            {% set bar_w = [prog.fill_ratio * 100, 100]|min %}
+                            <div class="h-2.5 rounded-full {% if prog.fill_ratio > 1.0 %}bg-red-500{% elif prog.fill_ratio >= 0.9 %}bg-amber-500{% else %}bg-emerald-500{% endif %} transition-all duration-300"
+                                 data-w="{{ bar_w|round(1) }}"></div>
                         </div>
                     </div>
-                    <span class="px-2.5 py-1 text-xs font-semibold rounded-full {% if prog.decision == 'BLOCK' %}bg-red-100 text-red-800 border border-red-200{% elif prog.decision == 'WARN' %}bg-amber-100 text-amber-800 border border-amber-200{% else %}bg-emerald-100 text-emerald-800 border border-emerald-200{% endif %}">
-                        {{ prog.decision }}
-                    </span>
+
+                    <!-- Decision Tag -->
+                    <div class="shrink-0">
+                        <span class="inline-flex items-center px-3 py-1 text-xs font-bold rounded-full {% if prog.decision == 'BLOCK' %}bg-red-100 text-red-800 border border-red-200{% elif prog.decision == 'WARN' %}bg-amber-100 text-amber-800 border border-amber-200{% else %}bg-emerald-100 text-emerald-800 border border-emerald-200{% endif %}">
+                            {{ prog.decision }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+            <div id="no-prog-matches" class="hidden p-8 text-center text-sm text-gray-500">
+                No academic programs match your filter criteria.
+            </div>
+        </div>
+    </div>
+
+    <!-- Minimalist Validation Alerts -->
+    <div class="bg-white rounded-xl border border-gray-200 shadow-xs overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 flex flex-wrap items-center justify-between gap-3 bg-gray-50/50">
+            <div class="flex items-center gap-2.5">
+                <h2 class="text-base font-bold text-gray-900">Validation Alerts</h2>
+                <span class="px-2 py-0.5 text-xs font-semibold rounded-full {% if open_flags_count > 0 %}bg-red-100 text-red-800{% else %}bg-emerald-100 text-emerald-800{% endif %}">
+                    {{ open_flags_count }} Open
+                </span>
+            </div>
+            <div class="flex items-center gap-3">
+                <a href="/institution/alerts/export"
+                   class="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-xs transition gap-1.5"
+                   title="Download validation alerts report as CSV">
+                    <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                    </svg>
+                    Download Report
+                </a>
+                <a href="/institution/students" class="text-xs text-indigo-600 hover:text-indigo-800 font-semibold inline-flex items-center gap-1 transition">
+                    View All Students &rarr;
+                </a>
+            </div>
+        </div>
+
+        {% if recent_flags %}
+        <div class="divide-y divide-gray-100">
+            {% for flag in recent_flags %}
+            <div class="p-4 sm:px-6 flex flex-col sm:flex-row sm:items-start justify-between gap-3 hover:bg-gray-50/50 transition {% if flag.severity == 'HIGH' %}border-l-4 border-l-red-500{% elif flag.severity == 'MEDIUM' %}border-l-4 border-l-amber-500{% else %}border-l-4 border-l-blue-500{% endif %}">
+                <div class="space-y-1.5 max-w-3xl">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="font-mono text-xs font-bold text-gray-900 bg-gray-100 px-2 py-0.5 rounded border border-gray-200">
+                            {{ flag.rule_code }}
+                        </span>
+                        <span class="badge-{{ flag.severity|lower }}">{{ flag.severity }}</span>
+                        <span class="text-xs text-gray-400">&bull; {{ flag.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                    </div>
+                    <p class="text-sm text-gray-800 font-medium leading-snug">{{ flag.message }}</p>
+                    {% if flag.recommended_action %}
+                    <p class="text-xs text-gray-500 flex items-center gap-1.5">
+                        <span class="font-semibold text-gray-700">Action:</span>
+                        <span>{{ flag.recommended_action }}</span>
+                    </p>
+                    {% endif %}
+                </div>
+
+                <div class="shrink-0 sm:self-center">
+                    <a href="/institution/students{% if flag.student_id %}?q={{ flag.student_id }}{% endif %}"
+                       class="inline-flex items-center px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 rounded-md transition">
+                        Inspect Record &rarr;
+                    </a>
                 </div>
             </div>
             {% endfor %}
         </div>
-    </div>
-
-    <!-- Recent Open Validation Flags -->
-    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
-            <h2 class="text-base font-bold text-gray-900">Recent Validation Flags</h2>
-            <a href="/institution/students" class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">View all students &rarr;</a>
-        </div>
-        {% if recent_flags %}
-        <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200 text-sm">
-                <thead class="bg-gray-50 text-gray-600">
-                    <tr>
-                        <th class="px-6 py-3 text-left font-semibold">Rule</th>
-                        <th class="px-6 py-3 text-left font-semibold">Severity</th>
-                        <th class="px-6 py-3 text-left font-semibold">Message</th>
-                        <th class="px-6 py-3 text-left font-semibold">Recommended Action</th>
-                        <th class="px-6 py-3 text-left font-semibold">Logged</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100">
-                    {% for flag in recent_flags %}
-                    <tr class="hover:bg-gray-50">
-                        <td class="px-6 py-3.5 font-mono font-medium text-gray-900">{{ flag.rule_code }}</td>
-                        <td class="px-6 py-3.5">
-                            <span class="badge-{{ flag.severity|lower }}">{{ flag.severity }}</span>
-                        </td>
-                        <td class="px-6 py-3.5 text-gray-700">{{ flag.message }}</td>
-                        <td class="px-6 py-3.5 text-gray-500 text-xs">{{ flag.recommended_action }}</td>
-                        <td class="px-6 py-3.5 text-gray-400 text-xs whitespace-nowrap">{{ flag.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
         {% else %}
         <div class="p-8 text-center text-sm text-gray-500">
-            No open validation flags. Institution is in full compliance!
+            <div class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-emerald-100 text-emerald-600 mb-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+            </div>
+            <p class="text-sm font-semibold text-gray-900">No Open Validation Flags</p>
+            <p class="text-xs text-gray-500 mt-0.5">Institution data is in full compliance with AICTE guidelines.</p>
         </div>
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
 {% block scripts %}
 <script>
   // Set progress bar widths from data-w attributes
   document.querySelectorAll('[data-w]').forEach(function (el) {
     el.style.width = el.dataset.w + '%';
   });
+
+  // Client-side real-time filter for academic programs
+  const searchInput = document.getElementById('prog-search');
+  const decisionFilter = document.getElementById('prog-decision-filter');
+  const programItems = document.querySelectorAll('.program-item');
+  const noMatchesMsg = document.getElementById('no-prog-matches');
+
+  function filterPrograms() {
+    if (!programItems.length) return;
+    const query = (searchInput ? searchInput.value : '').toLowerCase().trim();
+    const decision = decisionFilter ? decisionFilter.value : '';
+    let visibleCount = 0;
+
+    programItems.forEach(function (item) {
+      const name = item.dataset.name || '';
+      const itemDecision = item.dataset.decision || '';
+      const matchesQuery = !query || name.includes(query);
+      const matchesDecision = !decision || itemDecision === decision;
+
+      if (matchesQuery && matchesDecision) {
+        item.style.display = '';
+        visibleCount++;
+      } else {
+        item.style.display = 'none';
+      }
+    });
+
+    if (noMatchesMsg) {
+      noMatchesMsg.classList.toggle('hidden', visibleCount > 0);
+    }
+  }
+
+  if (searchInput) searchInput.addEventListener('input', filterPrograms);
+  if (decisionFilter) decisionFilter.addEventListener('change', filterPrograms);
 </script>
-{% endblock %}
 {% endblock %}

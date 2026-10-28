@@ -120,36 +120,66 @@ def institution_dashboard(
 def list_students(
     request: Request,
     q: Optional[str] = None,
-    program_id: Optional[int] = None,
+    program_id: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
     session: Session = Depends(get_session),
     user: User = Depends(require_role("INSTITUTION")),
 ):
     """
-    List enrolled students for the logged-in institution with search and program filters.
+    List enrolled students for the logged-in institution with robust search, program filters, and server-side pagination.
     """
     inst_id = user.institution_id
     programs = session.exec(select(Program).where(Program.institution_id == inst_id)).all()
     programs_map = {p.id: p.name for p in programs}
 
-    # Base query restricted to this institution
-    statement = select(Student).where(Student.institution_id == inst_id)
+    # Normalize per_page and page
+    if per_page not in (10, 20, 50, 100):
+        per_page = 20
+    page = max(1, page)
 
-    # Program filter
-    if program_id:
-        statement = statement.where(Student.program_id == program_id)
+    # Safely parse program_id string to integer (avoids 422 Unprocessable Entity when form submits program_id="")
+    parsed_program_id: Optional[int] = None
+    if program_id and str(program_id).strip():
+        try:
+            parsed_program_id = int(str(program_id).strip())
+        except (ValueError, TypeError):
+            parsed_program_id = None
 
-    # Search filter (name, roll no, or APAAR ID)
+    # Base filter criteria
+    filters = [Student.institution_id == inst_id]
+    if parsed_program_id:
+        filters.append(Student.program_id == parsed_program_id)
+
+    # Robust search: matches student name, institutional roll no, or APAAR ID (handles formatted/spaced IDs)
     if q and q.strip():
-        term = f"%{q.strip()}%"
-        statement = statement.where(
-            or_(
-                Student.full_name.ilike(term),
-                Student.student_id.ilike(term),
-                Student.apaar_id.ilike(term),
-            )
-        )
+        raw_term = q.strip()
+        term = f"%{raw_term}%"
+        digits_only = "".join(c for c in raw_term if c.isdigit())
 
-    statement = statement.order_by(Student.id.desc()).limit(150)
+        search_clauses = [
+            Student.full_name.ilike(term),
+            Student.student_id.ilike(term),
+            Student.apaar_id.ilike(term),
+        ]
+        if digits_only:
+            digit_term = f"%{digits_only}%"
+            search_clauses.append(Student.apaar_id.ilike(digit_term))
+            search_clauses.append(Student.student_id.ilike(digit_term))
+
+        filters.append(or_(*search_clauses))
+
+    # Total count calculation
+    count_statement = select(func.count(Student.id)).where(*filters)
+    total_students = session.exec(count_statement).one()
+
+    # Pagination bounds
+    total_pages = max(1, (total_students + per_page - 1) // per_page)
+    current_page = max(1, min(page, total_pages)) if total_students > 0 else 1
+    offset = (current_page - 1) * per_page
+
+    # Query paginated student records
+    statement = select(Student).where(*filters).order_by(Student.id.desc()).offset(offset).limit(per_page)
     students = session.exec(statement).all()
 
     # Pre-calculate open flags count per student for UI badges
@@ -160,6 +190,9 @@ def list_students(
     ).all()
     flags_by_student = {f[0]: f[1] for f in flags if f[0] is not None}
 
+    start_idx = offset + 1 if total_students > 0 else 0
+    end_idx = min(offset + per_page, total_students)
+
     return templates.TemplateResponse(
         request=request,
         name="institution_students.html",
@@ -169,9 +202,74 @@ def list_students(
             "programs_map": programs_map,
             "flags_by_student": flags_by_student,
             "search_query": q,
-            "selected_program_id": program_id,
+            "selected_program_id": parsed_program_id,
             "role": user.role,
+            "current_page": current_page,
+            "per_page": per_page,
+            "total_students": total_students,
+            "total_pages": total_pages,
+            "start_idx": start_idx,
+            "end_idx": end_idx,
+            "has_prev": current_page > 1,
+            "has_next": current_page < total_pages,
+            "prev_page": current_page - 1,
+            "next_page": current_page + 1,
         },
+    )
+
+
+@router.get("/alerts/export", response_class=StreamingResponse)
+def export_validation_alerts(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("INSTITUTION")),
+):
+    """
+    Download a CSV report of validation flags for the logged-in institution.
+    """
+    inst_id = user.institution_id
+    institution = session.get(Institution, inst_id)
+    flags = session.exec(
+        select(ValidationFlag)
+        .where(ValidationFlag.institution_id == inst_id)
+        .order_by(ValidationFlag.id.desc())
+    ).all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Flag ID",
+        "Institution ID",
+        "Institution Name",
+        "Rule Code",
+        "Severity",
+        "Student ID",
+        "Program ID",
+        "Message",
+        "Recommended Action",
+        "Status",
+        "Created At",
+    ])
+    for f in flags:
+        writer.writerow([
+            f.id,
+            inst_id,
+            institution.name if institution else "",
+            f.rule_code,
+            f.severity,
+            f.student_id or "",
+            f.program_id or "",
+            f.message,
+            f.recommended_action,
+            f.status,
+            f.created_at.strftime("%Y-%m-%d %H:%M:%S") if f.created_at else "",
+        ])
+
+    output.seek(0)
+    filename = f"institution_validation_alerts_{inst_id}.csv"
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
