@@ -202,34 +202,49 @@ async function checkIntake(programId) {
         return;
     }
     try {
-        const res = await fetch(`/institution/programs/${programId}/intake-check`);
+        const admTypeSelect = document.getElementById('admission_type');
+        const admType = admTypeSelect ? admTypeSelect.value : 'REGULAR';
+        const res = await fetch(`/institution/programs/${programId}/intake-check?admission_type=${encodeURIComponent(admType)}`);
         if (!res.ok) return;
         const data = await res.json();
 
         const badge = document.getElementById('intake-badge');
-        badge.innerText = `${data.decision} (${data.enrolled_regular}/${data.approved_intake} seats filled)`;
+        const targetLabel = admType === 'REGULAR' ? 'Regular' : 'Supernumerary';
+        const targetEnrolled = admType === 'REGULAR' ? data.enrolled_regular : data.enrolled_supernumerary;
+        const targetCap = admType === 'REGULAR' ? data.approved_intake : (data.permitted_supernumerary || data.supernumerary_cap);
+
+        badge.innerText = `${data.decision} (${targetLabel}: ${targetEnrolled}/${targetCap} filled | Total: ${data.total_enrolled || (data.enrolled_regular + data.enrolled_supernumerary)}/${data.total_capacity || data.approved_intake})`;
 
         if (data.decision === 'BLOCK') {
             badge.className = 'px-2 py-0.5 rounded font-semibold bg-red-100 text-red-800 border border-red-300';
-            document.getElementById('intake-details').innerText = 'Quota full! Further regular admissions will violate AICTE limits.';
+            const quotaName = admType === 'REGULAR' ? 'Regular intake' : 'Supernumerary quota';
+            document.getElementById('intake-details').innerText = `${quotaName} capacity reached! An authorized regulatory override justification (min 20 chars) is required.`;
             document.getElementById('justification-block').classList.remove('hidden');
         } else if (data.decision === 'WARN') {
             badge.className = 'px-2 py-0.5 rounded font-semibold bg-amber-100 text-amber-800 border border-amber-300';
-            document.getElementById('intake-details').innerText = `Warning: ${data.remaining_seats} seat(s) remaining (${(data.fill_ratio * 100).toFixed(1)}% full).`;
+            const rem = (data.regular_status && admType === 'REGULAR') ? data.regular_status.remaining : (data.supernumerary_status ? data.supernumerary_status.remaining : data.remaining_seats);
+            document.getElementById('intake-details').innerText = `Warning: Program approaching capacity. ${rem} ${targetLabel.toLowerCase()} seat(s) remaining.`;
             document.getElementById('justification-block').classList.add('hidden');
         } else {
             badge.className = 'px-2 py-0.5 rounded font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300';
-            document.getElementById('intake-details').innerText = `Capacity available: ${data.remaining_seats} regular seats remaining.`;
+            const rem = (data.regular_status && admType === 'REGULAR') ? data.regular_status.remaining : (data.supernumerary_status ? data.supernumerary_status.remaining : data.remaining_seats);
+            document.getElementById('intake-details').innerText = `Capacity available: ${rem} ${targetLabel.toLowerCase()} seats remaining (Total available: ${data.total_remaining || rem}).`;
             document.getElementById('justification-block').classList.add('hidden');
         }
     } catch (err) {
         console.error(err);
     }
 }
-// Run on load if editing
+// Run on load and listen to changes
 document.addEventListener('DOMContentLoaded', () => {
     const pSelect = document.getElementById('program_id');
+    const aSelect = document.getElementById('admission_type');
     if (pSelect && pSelect.value) checkIntake(pSelect.value);
+    if (aSelect) {
+        aSelect.addEventListener('change', () => {
+            if (pSelect && pSelect.value) checkIntake(pSelect.value);
+        });
+    }
 });
 </script>
 {% endblock %}

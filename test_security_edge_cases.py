@@ -544,17 +544,20 @@ class TestSecurityEdgeCases(unittest.TestCase):
             stu = session.exec(select(Student)).first()
             apaar_id = stu.apaar_id
 
-        # 1. POST /student/consent
+        # 1. POST /student/consent (authenticated student)
+        resp_login_consent = client.post("/student/consent", data={"action": "login", "apaar_id": apaar_id, "otp": "123456"})
+        auth_cookie = resp_login_consent.cookies.get("access_token")
+        auth_client = TestClient(app, cookies={"access_token": auth_cookie}, raise_server_exceptions=False)
         bad_values = ["-1", "3", "99", "malformed", ""]
         for bad_val in bad_values:
-            resp = client.post(
+            resp = auth_client.post(
                 "/student/consent",
                 data={"apaar_id": apaar_id, "action": "update_consent", "consent_level": bad_val},
             )
             self.assertEqual(resp.status_code, 422, f"Expected 422 for consent_level='{bad_val}', got {resp.status_code}")
 
         # Missing consent_level
-        resp_missing = client.post(
+        resp_missing = auth_client.post(
             "/student/consent",
             data={"apaar_id": apaar_id, "action": "update_consent"},
         )

@@ -15,7 +15,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from app.database import get_session
-from app.models import User
+from app.models import User, Student
 from app.audit import log_action
 
 # Router for authentication endpoints
@@ -78,10 +78,14 @@ def get_current_user(
     session: Session = Depends(get_session),
 ) -> Optional[User]:
     """
-    Dependency that reads JWT from the access_token HttpOnly cookie,
+    Dependency that reads JWT from the access_token HttpOnly cookie or Authorization header,
     validates the token, and returns the User model from the database.
     """
     token = request.cookies.get("access_token")
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1]
     if not token:
         return None
 
@@ -95,7 +99,29 @@ def get_current_user(
 
     statement = select(User).where(User.username == username)
     user = session.exec(statement).first()
-    return user
+    if user:
+        return user
+
+    # Support student identity authenticated via simulated DigiLocker OTP
+    # NOTE: Simulated authentication for SIH prototype demo only (not real DigiLocker identity verification).
+    if payload.get("role") == "STUDENT":
+        apaar = payload.get("apaar_id")
+        if not apaar and username.startswith("student:"):
+            apaar = username.split(":", 1)[1]
+        if apaar:
+            user = session.exec(select(User).where(User.apaar_id == apaar)).first()
+            if user:
+                return user
+            student = session.exec(select(Student).where(Student.apaar_id == apaar)).first()
+            if student:
+                return User(
+                    username=username,
+                    role="STUDENT",
+                    apaar_id=student.apaar_id,
+                    full_name=student.full_name,
+                    password_hash="",
+                )
+    return None
 
 
 def require_role(*roles: str):

@@ -11,6 +11,17 @@ from sqlmodel import Session, select, func
 from app.apaar_registry import validate_apaar_format, validate_dob_format
 from app.models import ApaarRegistry, Program, Setting, Student, ValidationFlag, utc_now
 
+# Canonical hard rejection rules and override limits
+HARD_REJECT_RULE_CODES = frozenset({"R1", "R2", "R9", "R11"})
+MAX_OVERRIDE_BUFFER_RATIO = 1.05  # Statutory AICTE emergency buffer: at most 105% of capacity
+MAX_OVERRIDE_BUFFER_SEATS = 3     # Or at most +3 seats (whichever is greater)
+AUTHORIZED_OVERRIDE_CATEGORIES = frozenset({
+    "AICTE_APPROVAL_LETTER",
+    "COURT_DIRECTIVE",
+    "GOVERNMENT_NOMINATION",
+    "ADMISSION_RECONCILIATION",
+})
+
 
 def rule_r1_apaar_format(apaar_id: Any) -> Optional[Dict[str, str]]:
     """R1: APAAR missing or not exactly 12 ASCII numeric digits (HIGH - Reject row)."""
@@ -502,6 +513,40 @@ def get_intake_settings(session: Session) -> Dict[str, str]:
     }
 
 
+def validate_override_request(
+    program: Program,
+    admission_type: str,
+    justification: Optional[str],
+    current_intake_data: Dict[str, Any],
+) -> Tuple[bool, Optional[str]]:
+    """
+    Validate authorized, auditable override requests:
+    - Rejects if justification is empty or < 20 characters.
+    - Rejects if enrolment has reached statutory hard ceiling (> 105% capacity or +3 seats).
+    Returns (is_valid, error_message).
+    """
+    total_capacity = current_intake_data["total_capacity"]
+    total_enrolled = current_intake_data["total_enrolled"]
+
+    # Statutory hard ceiling: at most 105% of capacity (or +3 seats, whichever is greater)
+    hard_ceiling = max(int(total_capacity * MAX_OVERRIDE_BUFFER_RATIO), total_capacity + MAX_OVERRIDE_BUFFER_SEATS)
+    if total_enrolled >= hard_ceiling:
+        return False, (
+            f"Statutory Hard Ceiling Reached: Total enrolment ({total_enrolled}) has reached the "
+            f"statutory limit ({hard_ceiling}) for program '{program.name}'. "
+            f"AICTE regulations strictly forbid further admissions."
+        )
+
+    clean_just = str(justification or "").strip()
+    if len(clean_just) < 20:
+        return False, (
+            "Invalid justification: An over-admission override strictly requires a formal regulatory "
+            "explanation of at least 20 characters (e.g. AICTE approval letter ref, court directive, or reconciliation details)."
+        )
+
+    return True, None
+
+
 def intake_check(
     program_id: int,
     session: Session,
@@ -509,14 +554,14 @@ def intake_check(
     settings: Optional[Dict[str, str]] = None,
     regular_count: Optional[int] = None,
     super_count: Optional[int] = None,
+    target_admission_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Intake Guard (D1):
-    Checks seat intake quota for a program and determines status:
-    - ALLOW: fill ratio under 90%
-    - WARN: fill ratio 90% - 100%
-    - BLOCK: one more admission would exceed approved intake
-    Optimized: accepts preloaded program/settings/counts, or queries SQL counts directly.
+    Intake Guard (D1) & Multi-Dimension Seat Meter:
+    Independently enforces:
+    1. Regular enrolment <= AICTE-approved intake
+    2. Supernumerary enrolment <= permitted supernumerary seats
+    3. Total enrolment <= approved intake + permitted supernumerary seats
     """
     if program is None:
         program = session.get(Program, program_id)
@@ -537,8 +582,6 @@ def intake_check(
             super_count = counts.get("SUPERNUMERARY", 0)
 
     approved = program.approved_intake
-    remaining = max(0, approved - regular_count)
-    fill_ratio = regular_count / approved if approved > 0 else 1.0
 
     if settings is None:
         settings = get_intake_settings(session)
@@ -546,38 +589,136 @@ def intake_check(
     try:
         warning_threshold = float(settings.get("intake_warn_threshold", "0.90"))
         block_threshold = float(settings.get("intake_block_threshold", "1.00"))
-        supernumerary_cap = float(
-            settings.get("supernumerary_cap_default", str(program.supernumerary_cap))
-        )
+        default_super_cap = float(settings.get("supernumerary_cap_default", "0.10"))
     except ValueError as exc:
         raise ValueError("Intake policy settings must contain numeric values") from exc
 
-    if regular_count >= approved:
-        decision = "BLOCK"
-    elif fill_ratio >= block_threshold:
-        decision = "BLOCK"
-    elif fill_ratio >= warning_threshold:
-        decision = "WARN"
+    # Respect program-level supernumerary cap; fallback to system default if None
+    prog_cap = program.supernumerary_cap if program.supernumerary_cap is not None else default_super_cap
+    if prog_cap >= 1.0:
+        permitted_super = int(prog_cap)
     else:
-        decision = "ALLOW"
+        permitted_super = int(approved * prog_cap)
+
+    total_capacity = approved + permitted_super
+    total_count = regular_count + super_count
+
+    # Independent fill ratios
+    regular_fill_ratio = regular_count / approved if approved > 0 else 1.0
+    super_fill_ratio = super_count / permitted_super if permitted_super > 0 else (0.0 if super_count == 0 else 1.0)
+    total_fill_ratio = total_count / total_capacity if total_capacity > 0 else 1.0
+
+    # Independent remaining seats
+    regular_remaining = max(0, approved - regular_count)
+    super_remaining = max(0, permitted_super - super_count)
+    total_remaining = max(0, total_capacity - total_count)
+
+    # Rule 1 Decision (Regular: N_regular <= approved)
+    if regular_count >= approved or regular_fill_ratio >= block_threshold:
+        regular_decision = "BLOCK"
+    elif regular_fill_ratio >= warning_threshold:
+        regular_decision = "WARN"
+    else:
+        regular_decision = "ALLOW"
+
+    # Rule 2 Decision (Supernumerary: N_super <= permitted_super)
+    if super_count >= permitted_super or super_fill_ratio >= block_threshold:
+        super_decision = "BLOCK"
+    elif super_fill_ratio >= warning_threshold:
+        super_decision = "WARN"
+    else:
+        super_decision = "ALLOW"
+
+    # Rule 3 Decision (Total: N_total <= total_capacity)
+    if total_count >= total_capacity or total_fill_ratio >= block_threshold:
+        total_decision = "BLOCK"
+    elif total_fill_ratio >= warning_threshold:
+        total_decision = "WARN"
+    else:
+        total_decision = "ALLOW"
+
+    # Detect all specific rule violations
+    violations: List[str] = []
+    if regular_count > approved:
+        violations.append(f"Regular admissions ({regular_count}) exceed approved intake ({approved}) by {regular_count - approved} seat(s).")
+    if super_count > permitted_super:
+        violations.append(f"Supernumerary admissions ({super_count}) exceed quota cap ({permitted_super}) by {super_count - permitted_super} seat(s).")
+    if total_count > total_capacity:
+        violations.append(f"Total admissions ({total_count}) exceed approved capacity ({total_capacity}) by {total_count - total_capacity} seat(s).")
+
+    # Determine overall decision based on target admission type if specified, or default regular admission check
+    clean_type = str(target_admission_type or "").strip().upper()
+    if clean_type == "SUPERNUMERARY":
+        if super_decision == "BLOCK" or total_decision == "BLOCK":
+            effective_decision = "BLOCK"
+        elif super_decision == "WARN" or total_decision == "WARN":
+            effective_decision = "WARN"
+        else:
+            effective_decision = "ALLOW"
+    elif clean_type == "REGULAR":
+        if regular_decision == "BLOCK" or total_decision == "BLOCK":
+            effective_decision = "BLOCK"
+        elif regular_decision == "WARN" or total_decision == "WARN":
+            effective_decision = "WARN"
+        else:
+            effective_decision = "ALLOW"
+    else:
+        # Default admission check evaluates regular capacity and total capacity
+        if regular_decision == "BLOCK" or total_decision == "BLOCK":
+            effective_decision = "BLOCK"
+        elif regular_decision == "WARN" or total_decision == "WARN":
+            effective_decision = "WARN"
+        else:
+            effective_decision = "ALLOW"
 
     return {
+        # Backward-compatible keys
         "program_id": program_id,
         "program_name": program.name,
         "academic_year": program.academic_year,
         "approved_intake": approved,
         "enrolled_regular": regular_count,
         "enrolled_supernumerary": super_count,
-        "supernumerary_cap": int(approved * supernumerary_cap),
-        "remaining_seats": remaining,
-        "fill_ratio": round(fill_ratio, 3),
-        "decision": decision,
+        "supernumerary_cap": permitted_super,
+        "remaining_seats": regular_remaining,
+        "fill_ratio": round(regular_fill_ratio, 3),
+        "decision": effective_decision,
+
+        # Independent rule status breakdowns
+        "permitted_supernumerary": permitted_super,
+        "total_capacity": total_capacity,
+        "total_enrolled": total_count,
+        "total_remaining": total_remaining,
+        "total_fill_ratio": round(total_fill_ratio, 3),
+        "regular_status": {
+            "approved": approved,
+            "enrolled": regular_count,
+            "remaining": regular_remaining,
+            "fill_ratio": round(regular_fill_ratio, 3),
+            "decision": regular_decision,
+        },
+        "supernumerary_status": {
+            "permitted": permitted_super,
+            "enrolled": super_count,
+            "remaining": super_remaining,
+            "fill_ratio": round(super_fill_ratio, 3),
+            "decision": super_decision,
+        },
+        "total_status": {
+            "capacity": total_capacity,
+            "enrolled": total_count,
+            "remaining": total_remaining,
+            "fill_ratio": round(total_fill_ratio, 3),
+            "decision": total_decision,
+        },
+        "violations": violations,
     }
 
 
 def batch_intake_check(
     programs: List[Program],
     session: Session,
+    target_admission_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     High-performance batch intake check for multiple programs.
@@ -608,6 +749,7 @@ def batch_intake_check(
             settings=settings,
             regular_count=counts_by_prog[p.id]["REGULAR"],
             super_count=counts_by_prog[p.id]["SUPERNUMERARY"],
+            target_admission_type=target_admission_type,
         )
         for p in programs
     ]
@@ -654,13 +796,14 @@ def validate_program_intake(program_id: int, session: Session) -> List[Validatio
         flags.append(flag)
 
     # R7 check
-    if intake_data["enrolled_supernumerary"] > intake_data["supernumerary_cap"]:
+    if intake_data["enrolled_supernumerary"] > intake_data["permitted_supernumerary"]:
+        excess = intake_data["enrolled_supernumerary"] - intake_data["permitted_supernumerary"]
         flag = ValidationFlag(
             institution_id=program.institution_id,
             program_id=program.id,
             rule_code="R7",
             severity="MEDIUM",
-            message=f"Supernumerary admissions ({intake_data['enrolled_supernumerary']}) exceed quota cap ({intake_data['supernumerary_cap']}).",
+            message=f"Supernumerary admissions ({intake_data['enrolled_supernumerary']}) exceed quota cap ({intake_data['permitted_supernumerary']}) by {excess} seat(s).",
             recommended_action="Verify AICTE approval letters for supernumerary seats.",
             status="OPEN",
             created_at=utc_now(),

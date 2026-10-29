@@ -6,9 +6,10 @@ Strictly scoped to the logged-in institution's own data.
 
 import csv
 import io
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 import json
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -26,6 +27,8 @@ from app.validation import (
     intake_check,
     validate_program_intake,
     validate_student_row,
+    validate_override_request,
+    HARD_REJECT_RULE_CODES,
 )
 
 router = APIRouter(prefix="/institution", tags=["Institution"])
@@ -659,20 +662,29 @@ def create_student(
             status_code=400,
         )
 
-    # Intake Guard check
-    intake = intake_check(program_id, session)
-    if intake["decision"] == "BLOCK" and not (override_justification and override_justification.strip()):
-        return templates.TemplateResponse(
-            request=request,
-            name="student_form.html",
-            context={
-                "student": None,
-                "programs": programs,
-                "error": "Intake quota is FULL (BLOCK). An over-admission justification is strictly required to proceed.",
-                "role": user.role,
-            },
-            status_code=400,
+    # Intake Guard check with proposed admission type
+    intake = intake_check(program_id, session, target_admission_type=admission_type)
+    if intake["decision"] == "BLOCK":
+        is_valid_override, override_err = validate_override_request(
+            program=program,
+            admission_type=admission_type,
+            justification=override_justification,
+            current_intake_data=intake,
         )
+        if not is_valid_override:
+            quota_label = "Regular intake" if admission_type == "REGULAR" else "Supernumerary quota"
+            err_detail = override_err or f"{quota_label} is FULL (BLOCK). A formal over-admission justification (min 20 characters) is required to proceed."
+            return templates.TemplateResponse(
+                request=request,
+                name="student_form.html",
+                context={
+                    "student": None,
+                    "programs": programs,
+                    "error": err_detail,
+                    "role": user.role,
+                },
+                status_code=400,
+            )
 
     # Build validation context and run rules
     ctx = build_validation_context(inst_id, session)
@@ -695,10 +707,10 @@ def create_student(
     }
 
     flags = validate_student_row(row_data, ctx)
-    is_rejected = any(f["rule_code"] in ["R1", "R2", "R9", "R11"] for f in flags)
+    is_rejected = any(f["rule_code"] in HARD_REJECT_RULE_CODES for f in flags)
 
     if is_rejected:
-        reject_reasons = "; ".join(f["message"] for f in flags if f["rule_code"] in ["R1", "R2", "R9", "R11"])
+        reject_reasons = "; ".join(f["message"] for f in flags if f["rule_code"] in HARD_REJECT_RULE_CODES)
         return templates.TemplateResponse(
             request=request,
             name="student_form.html",
@@ -823,24 +835,45 @@ def update_student(
     if not student or student.institution_id != user.institution_id:
         raise HTTPException(status_code=404, detail="Student not found or access denied")
 
-    # If program is changed, check target program intake
-    if student.program_id != program_id:
-        intake = intake_check(program_id, session)
-        if intake["decision"] == "BLOCK" and not (override_justification and override_justification.strip()):
-            programs = session.exec(select(Program).where(Program.institution_id == user.institution_id)).all()
-            return templates.TemplateResponse(
-                request=request,
-                name="student_form.html",
-                context={
-                    "student": student,
-                    "programs": programs,
-                    "error": "Target program intake is FULL (BLOCK). An over-admission justification is strictly required to proceed.",
-                    "role": user.role,
-                },
-                status_code=400,
+    # Evaluate seat quota if program changed, admission type changed, or student reactivated
+    seat_claim_changed = (
+        student.program_id != program_id
+        or student.admission_type != admission_type
+        or (student.status != "ACTIVE" and status_field == "ACTIVE")
+    )
+    if seat_claim_changed:
+        target_program = session.get(Program, program_id)
+        if not target_program or target_program.institution_id != user.institution_id:
+            raise HTTPException(status_code=400, detail="Target program is invalid for this institution.")
+
+        intake = intake_check(program_id, session, target_admission_type=admission_type)
+        if intake["decision"] == "BLOCK":
+            is_valid_override, override_err = validate_override_request(
+                program=target_program,
+                admission_type=admission_type,
+                justification=override_justification,
+                current_intake_data=intake,
             )
+            if not is_valid_override:
+                programs = session.exec(select(Program).where(Program.institution_id == user.institution_id)).all()
+                quota_label = "Regular intake" if admission_type == "REGULAR" else "Supernumerary quota"
+                err_detail = override_err or f"Target program {quota_label} is FULL (BLOCK). A formal over-admission justification (min 20 characters) is required to proceed."
+                return templates.TemplateResponse(
+                    request=request,
+                    name="student_form.html",
+                    context={
+                        "student": student,
+                        "programs": programs,
+                        "error": err_detail,
+                        "role": user.role,
+                    },
+                    status_code=400,
+                )
 
     old_program_id = student.program_id
+    old_admission_type = student.admission_type
+    old_status = student.status
+
     student.full_name = full_name.strip()
     student.dob = dob.strip()
     student.gender = gender
@@ -860,8 +893,8 @@ def update_student(
     session.add(student)
     session.commit()
 
-    # Re-evaluate intake if program changed
-    if old_program_id != program_id:
+    # Re-evaluate intake if program, admission type, or status changed
+    if old_program_id != program_id or old_admission_type != admission_type or old_status != status_field:
         if old_program_id:
             validate_program_intake(old_program_id, session)
         validate_program_intake(program_id, session)
@@ -962,6 +995,11 @@ async def process_csv_upload(
     # Preload validation context once
     ctx = build_validation_context(inst_id, session)
 
+    # Pre-fetch intake quotas for institution programs to reject new admissions over capacity
+    inst_programs = session.exec(select(Program).where(Program.institution_id == inst_id)).all()
+    batch_intake_map: Dict[int, Dict[str, Any]] = {p.id: intake_check(p.id, session, program=p) for p in inst_programs}
+    batch_allocated: Dict[int, Dict[str, int]] = defaultdict(lambda: {"REGULAR": 0, "SUPERNUMERARY": 0})
+
     accepted_clean: List[Student] = []
     accepted_with_warnings: List[Student] = []
     rejected_rows: List[Dict[str, Any]] = []
@@ -970,10 +1008,10 @@ async def process_csv_upload(
     for _, row in df.iterrows():
         row_dict = row.to_dict()
         flags = validate_student_row(row_dict, ctx)
-        is_rejected = any(f["rule_code"] in ["R1", "R2", "R9", "R11"] for f in flags)
+        is_rejected = any(f["rule_code"] in HARD_REJECT_RULE_CODES for f in flags)
 
         if is_rejected:
-            reasons = "; ".join(f["message"] for f in flags if f["rule_code"] in ["R1", "R2", "R9", "R11"])
+            reasons = "; ".join(f["message"] for f in flags if f["rule_code"] in HARD_REJECT_RULE_CODES)
             rejected_rows.append({**row_dict, "rejection_reason": reasons})
         else:
             prog_name_key = str(row_dict.get("program_name") or row_dict.get("program_id") or "").strip().lower()
@@ -990,6 +1028,40 @@ async def process_csv_upload(
                 or ctx["program_map"].get(f"{prog_name_key} engineering")
             )
             prog_id = program.id if program else None
+
+            # Capacity Guard for new admissions: do not silently accept invalid new admissions
+            adm_type = str(row_dict.get("admission_type") or "REGULAR").strip().upper() or "REGULAR"
+            if prog_id and prog_id in batch_intake_map:
+                p_info = batch_intake_map[prog_id]
+                curr_reg = p_info["enrolled_regular"] + batch_allocated[prog_id]["REGULAR"]
+                curr_super = p_info["enrolled_supernumerary"] + batch_allocated[prog_id]["SUPERNUMERARY"]
+                curr_total = curr_reg + curr_super
+                approved_lim = p_info["approved_intake"]
+                super_lim = p_info["permitted_supernumerary"]
+                total_lim = p_info["total_capacity"]
+
+                is_quota_rejected = False
+                quota_reason = ""
+                if adm_type == "REGULAR":
+                    if curr_reg >= approved_lim:
+                        is_quota_rejected = True
+                        quota_reason = f"Regular intake capacity exceeded for program '{program.name}' ({approved_lim} sanctioned). New admissions over approved capacity are rejected."
+                    elif curr_total >= total_lim:
+                        is_quota_rejected = True
+                        quota_reason = f"Total program capacity exceeded for program '{program.name}' ({total_lim} total capacity). New admissions over capacity are rejected."
+                elif adm_type == "SUPERNUMERARY":
+                    if curr_super >= super_lim:
+                        is_quota_rejected = True
+                        quota_reason = f"Supernumerary quota capacity exceeded for program '{program.name}' ({super_lim} permitted). New admissions over permitted quota are rejected."
+                    elif curr_total >= total_lim:
+                        is_quota_rejected = True
+                        quota_reason = f"Total program capacity exceeded for program '{program.name}' ({total_lim} total capacity). New admissions over capacity are rejected."
+
+                if is_quota_rejected:
+                    rejected_rows.append({**row_dict, "rejection_reason": quota_reason})
+                    continue
+
+                batch_allocated[prog_id][adm_type] += 1
 
             stu = Student(
                 apaar_id=str(row_dict.get("apaar_id")).strip(),
@@ -1101,8 +1173,9 @@ def download_error_csv(user: User = Depends(require_role("INSTITUTION"))):
 @router.get("/programs/{program_id}/intake-check")
 def program_intake_check(
     program_id: int,
+    admission_type: Optional[str] = Query(default=None),
     session: Session = Depends(get_session),
     user: User = Depends(require_role("INSTITUTION")),
 ):
     """AJAX endpoint for live seat meter in student forms."""
-    return intake_check(program_id, session)
+    return intake_check(program_id, session, target_admission_type=admission_type)

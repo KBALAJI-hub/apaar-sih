@@ -5,7 +5,7 @@ Secured via X-API-Key header matched to Institution.api_key.
 """
 
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Security, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session, select
@@ -19,6 +19,8 @@ from app.validation import (
     intake_check,
     validate_program_intake,
     validate_student_row,
+    validate_override_request,
+    HARD_REJECT_RULE_CODES,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["External Integration API"])
@@ -236,7 +238,7 @@ def bulk_student_upload(
     for idx, item in enumerate(students):
         row_dict = item.model_dump()
         flags = validate_student_row(row_dict, ctx)
-        reject_flags = [f for f in flags if f["rule_code"] in ["R1", "R2", "R9", "R11"]]
+        reject_flags = [f for f in flags if f["rule_code"] in HARD_REJECT_RULE_CODES]
 
         if reject_flags:
             rejected_count += 1
@@ -356,23 +358,41 @@ def update_student_api(
         )
 
     old_program_id = student.program_id
+    target_adm_type = data.admission_type or student.admission_type
+    target_status = data.status or student.status
+    target_prog_id = data.program_id if data.program_id is not None else student.program_id
 
-    # If changing academic program, verify target program belongs to institution and check intake
-    if data.program_id is not None and data.program_id != student.program_id:
-        target_prog = session.get(Program, data.program_id)
+    # If changing academic program, admission type, or reactivating from WITHDRAWN to ACTIVE
+    seat_claim_changed = (
+        (data.program_id is not None and data.program_id != student.program_id)
+        or (data.admission_type is not None and data.admission_type != student.admission_type)
+        or (student.status != "ACTIVE" and target_status == "ACTIVE")
+    )
+
+    if seat_claim_changed:
+        target_prog = session.get(Program, target_prog_id)
         if not target_prog or target_prog.institution_id != institution.id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Target program ID is invalid or does not belong to this institution.",
             )
 
-        intake = intake_check(data.program_id, session)
-        if intake["decision"] == "BLOCK" and not (data.override_justification and data.override_justification.strip()):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Target program intake quota is FULL (BLOCK). An override_justification text is strictly required.",
+        intake = intake_check(target_prog_id, session, target_admission_type=target_adm_type)
+        if intake["decision"] == "BLOCK":
+            is_valid_override, override_err = validate_override_request(
+                program=target_prog,
+                admission_type=target_adm_type,
+                justification=data.override_justification,
+                current_intake_data=intake,
             )
-        student.program_id = data.program_id
+            if not is_valid_override:
+                quota_name = "Regular intake" if target_adm_type == "REGULAR" else "Supernumerary quota"
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=override_err or f"Target program {quota_name} is FULL (BLOCK). An override_justification text is strictly required.",
+                )
+        if data.program_id is not None:
+            student.program_id = data.program_id
 
     # Update provided fields
     if data.full_name is not None:
@@ -458,10 +478,11 @@ def update_student_api(
 )
 def program_intake_check_api(
     program_id: int = Path(..., description="ID of the approved academic program", examples=[1]),
+    admission_type: Optional[str] = Query(default=None, description="Optional target admission type (REGULAR or SUPERNUMERARY)"),
     session: Session = Depends(get_session),
 ):
     """AJAX / public endpoint returning live seat meter calculation for a program."""
     program = session.get(Program, program_id)
     if not program:
         raise HTTPException(status_code=404, detail=f"Program with ID {program_id} not found")
-    return intake_check(program_id, session)
+    return intake_check(program_id, session, target_admission_type=admission_type)
