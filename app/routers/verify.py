@@ -63,6 +63,70 @@ def get_verifier_identifier(request: Request, user: Optional[User]) -> Tuple[Opt
     return None, f"ip:{client_ip}"
 
 
+def validate_csrf_origin(request: Request) -> None:
+    """
+    Validate incoming Origin header for state-changing requests against trusted request host.
+    Rejects malformed, opaque (e.g. 'null'), or cross-origin headers with HTTP 403.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+
+    origin_str = origin.strip()
+    if not origin_str or origin_str.lower() == "null":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cross-site request forgery detected.",
+        )
+
+    try:
+        from urllib.parse import urlparse
+        parsed_origin = urlparse(origin_str)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cross-site request forgery detected.",
+        )
+
+    if parsed_origin.scheme not in ("http", "https") or not parsed_origin.netloc or not parsed_origin.hostname:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cross-site request forgery detected.",
+        )
+
+    host = request.headers.get("host")
+    if not host:
+        host = request.url.netloc
+    if not host:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Host header required for origin validation.",
+        )
+
+    try:
+        parsed_host = urlparse("//" + host.strip())
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Invalid host header.",
+        )
+
+    if not parsed_host.hostname or parsed_origin.hostname.lower() != parsed_host.hostname.lower():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cross-site request forgery detected.",
+        )
+
+    origin_port = parsed_origin.port or (443 if parsed_origin.scheme == "https" else 80)
+    req_scheme = request.url.scheme or "http"
+    host_port = parsed_host.port or (443 if req_scheme == "https" else 80)
+    if origin_port != host_port:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Cross-site request forgery detected.",
+        )
+
+
 def get_effective_consent_tier(consent_level: Any) -> int:
     """
     Safely resolves consent tier enforcing:
@@ -110,8 +174,15 @@ def student_consent_page(
     student = None
     lookups: List[VerificationLog] = []
 
-    if user and user.role == "STUDENT" and user.apaar_id:
-        student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
+    if user and user.role == "STUDENT":
+        if user.apaar_id:
+            student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
+        if not student and user.username:
+            if user.username.startswith("student:"):
+                auth_apaar = user.username.split(":", 1)[1]
+                student = session.exec(select(Student).where(Student.apaar_id == auth_apaar)).first()
+            else:
+                student = session.exec(select(Student).where(Student.student_id == user.username)).first()
         if student:
             lookups = session.exec(
                 select(VerificationLog)
@@ -136,7 +207,7 @@ def student_consent_page(
 def handle_student_consent(
     request: Request,
     action: str = Form("login"),
-    apaar_id: str = Form(...),
+    apaar_id: Optional[str] = Form(None),
     otp: Optional[str] = Form(None),
     consent_level: Optional[str] = Form(None),
     session: Session = Depends(get_session),
@@ -145,13 +216,29 @@ def handle_student_consent(
     """
     Process Student Consent actions:
     1. 'login': Verify APAAR ID and demo simulated DigiLocker OTP (123456).
-    2. 'update_consent': Set consent level (0, 1, or 2) and record audit trail.
+       NOTE: This is simulated DigiLocker authentication for the SIH prototype demo,
+       not real DigiLocker identity verification.
+    2. 'update_consent': Require valid authenticated student session, resolve target student
+       strictly from authenticated identity, validate consent tier, re-sign with Ed25519, and log audit.
     """
-    clean_apaar = apaar_id.strip()
-    student = session.exec(select(Student).where(Student.apaar_id == clean_apaar)).first()
+    clean_apaar = apaar_id.strip() if apaar_id else ""
 
-    # Step A: Authentication via simulated DigiLocker OTP
+    # Step A: Authentication via simulated DigiLocker OTP (Demo Prototype)
+    # NOTE: Simulated authentication for SIH prototype demo only (not real DigiLocker identity verification).
     if action == "login":
+        if not clean_apaar:
+            return templates.TemplateResponse(
+                request=request,
+                name="student_consent.html",
+                context={
+                    "student": None,
+                    "apaar_id": "",
+                    "error": "APAAR ID is required for authentication.",
+                    "role": user.role if user else None,
+                },
+                status_code=400,
+            )
+
         if not otp or otp.strip() != "123456":
             return templates.TemplateResponse(
                 request=request,
@@ -165,6 +252,7 @@ def handle_student_consent(
                 status_code=400,
             )
 
+        student = session.exec(select(Student).where(Student.apaar_id == clean_apaar)).first()
         if not student:
             return templates.TemplateResponse(
                 request=request,
@@ -192,7 +280,7 @@ def handle_student_consent(
                 "student": student,
                 "lookups": lookups,
                 "role": "STUDENT",
-                "success": "DigiLocker identity authenticated successfully.",
+                "success": "DigiLocker identity authenticated successfully (simulated demo).",
             },
         )
         resp.set_cookie(
@@ -203,20 +291,50 @@ def handle_student_consent(
         )
         return resp
 
-    # Step B: Update Consent Level (0, 1, or 2)
+    # Step B: Update Consent Level (0, 1, or 2) - Requires authenticated student session
     elif action == "update_consent":
-        if not student:
-            return templates.TemplateResponse(
-                request=request,
-                name="student_consent.html",
-                context={
-                    "student": None,
-                    "error": "Student record not found.",
-                    "role": user.role if user else None,
-                },
-                status_code=404,
+        # 1. Reject missing, invalid or expired authentication
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required: A valid student session is required to modify consent preferences.",
             )
 
+        # 2. Enforce STUDENT role (reject non-students with 403)
+        if user.role != "STUDENT":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Forbidden: requires role 'STUDENT', got '{user.role}'",
+            )
+
+        # 3. Check CSRF via Origin header if provided
+        validate_csrf_origin(request)
+
+        # 4. Resolve target student strictly from validated authenticated identity
+        student = None
+        if user.apaar_id:
+            student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
+        if not student and user.username:
+            if user.username.startswith("student:"):
+                auth_apaar = user.username.split(":", 1)[1]
+                student = session.exec(select(Student).where(Student.apaar_id == auth_apaar)).first()
+            else:
+                student = session.exec(select(Student).where(Student.student_id == user.username)).first()
+
+        if not student:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Authenticated student record not found in AICTE registry.",
+            )
+
+        # 5. Prevent cross-student manipulation: Student A cannot change Student B's consent
+        if clean_apaar and clean_apaar != student.apaar_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: You cannot modify consent preferences for another student.",
+            )
+
+        # 6. Validate consent tier
         if consent_level is None or not str(consent_level).strip():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -232,24 +350,29 @@ def handle_student_consent(
                 detail="Invalid consent tier. Allowed tiers are 0 (Authenticity only), 1 (Directory only), or 2 (Full record).",
             )
 
-        student.consent_level = new_level
-        student.consent_timestamp = utc_now() if new_level > 0 else None
-        student.updated_at = utc_now()
-        # Re-sign record with Ed25519
-        student.record_signature = sign_record(student, session)
-        session.add(student)
-        session.commit()
-        session.refresh(student)
+        # 7. Apply consent update, re-sign record, and log audit atomically
+        try:
+            student.consent_level = new_level
+            student.consent_timestamp = utc_now() if new_level > 0 else None
+            student.updated_at = utc_now()
+            student.record_signature = sign_record(student, session)
+            session.add(student)
 
-        # Log audit entry
-        log_action(
-            session=session,
-            user=user or {"id": None, "username": f"student:{student.apaar_id}"},
-            action="CONSENT_UPDATE",
-            entity="STUDENT",
-            entity_id=str(student.id),
-            details=f"Student {student.full_name} updated DigiLocker consent preference to Tier {new_level}",
-        )
+            # Record immutable hash-chained audit log in same atomic transaction
+            log_action(
+                session=session,
+                user=user,
+                action="CONSENT_UPDATE",
+                entity="STUDENT",
+                entity_id=str(student.id),
+                details=f"Student {student.full_name} updated DigiLocker consent preference to Tier {new_level}",
+                commit=False,
+            )
+            session.commit()
+            session.refresh(student)
+        except Exception:
+            session.rollback()
+            raise
 
         lookups = session.exec(
             select(VerificationLog)
@@ -263,7 +386,7 @@ def handle_student_consent(
             context={
                 "student": student,
                 "lookups": lookups,
-                "role": user.role if user else None,
+                "role": user.role,
                 "success": f"DigiLocker consent preferences updated successfully to Tier {new_level}.",
             },
         )
@@ -510,7 +633,11 @@ def student_dashboard(
     if user.apaar_id:
         student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
     if not student and user.username:
-        student = session.exec(select(Student).where(Student.student_id == user.username)).first()
+        if user.username.startswith("student:"):
+            auth_apaar = user.username.split(":", 1)[1]
+            student = session.exec(select(Student).where(Student.apaar_id == auth_apaar)).first()
+        else:
+            student = session.exec(select(Student).where(Student.student_id == user.username)).first()
     if not student:
         # Fallback to first student in db if demo user
         student = session.exec(select(Student)).first()
@@ -564,10 +691,24 @@ def student_dashboard(
 def update_student_dashboard_consent(
     request: Request,
     consent_level: Optional[str] = Form(None),
-    user: User = Depends(require_role("STUDENT")),
+    user: Optional[User] = Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
     """Update student consent tier directly from the student dashboard."""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required: A valid student session is required to modify consent preferences.",
+        )
+    if user.role != "STUDENT":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Forbidden: requires role 'STUDENT', got '{user.role}'",
+        )
+
+    # CSRF check via Origin header if present
+    validate_csrf_origin(request)
+
     if consent_level is None or not str(consent_level).strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -587,26 +728,35 @@ def update_student_dashboard_consent(
     if user.apaar_id:
         student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
     if not student and user.username:
-        student = session.exec(select(Student).where(Student.student_id == user.username)).first()
+        if user.username.startswith("student:"):
+            auth_apaar = user.username.split(":", 1)[1]
+            student = session.exec(select(Student).where(Student.apaar_id == auth_apaar)).first()
+        else:
+            student = session.exec(select(Student).where(Student.student_id == user.username)).first()
 
     if not student:
         raise HTTPException(status_code=404, detail="Student record not found")
 
-    student.consent_level = tier_int
-    student.consent_timestamp = utc_now() if tier_int > 0 else None
-    student.updated_at = utc_now()
-    student.record_signature = sign_record(student, session)
-    session.add(student)
+    try:
+        student.consent_level = tier_int
+        student.consent_timestamp = utc_now() if tier_int > 0 else None
+        student.updated_at = utc_now()
+        student.record_signature = sign_record(student, session)
+        session.add(student)
 
-    log_action(
-        session=session,
-        user=user,
-        action="UPDATE_CONSENT",
-        entity="STUDENT",
-        entity_id=str(student.id),
-        details=f"Student {student.apaar_id} updated consent to Tier {tier_int} from dashboard",
-    )
-    session.commit()
+        log_action(
+            session=session,
+            user=user,
+            action="UPDATE_CONSENT",
+            entity="STUDENT",
+            entity_id=str(student.id),
+            details=f"Student {student.apaar_id} updated consent to Tier {tier_int} from dashboard",
+            commit=False,
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
 
     return RedirectResponse(
         url="/student/dashboard",

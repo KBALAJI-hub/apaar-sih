@@ -47,6 +47,7 @@ def log_action(
     entity: str,
     entity_id: Any = None,
     details: Any = None,
+    commit: bool = True,
 ) -> AuditLog:
     """
     Record an immutable audit log entry chained to the previous record.
@@ -106,8 +107,9 @@ def log_action(
         row_hash=row_hash,
     )
     session.add(log_entry)
-    session.commit()
-    session.refresh(log_entry)
+    if commit:
+        session.commit()
+        session.refresh(log_entry)
     return log_entry
 
 
