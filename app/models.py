@@ -1,6 +1,6 @@
 """
 SQLModel database tables for APAAR Verify.
-Dialect-neutral schema compatible with SQLite and PostgreSQL.
+Authoritative schema for Supabase PostgreSQL.
 """
 
 from datetime import datetime, timezone

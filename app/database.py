@@ -1,10 +1,12 @@
 """
 Database configuration, session management, and connection resilience for APAAR Verify.
-Supports SQLite (local fallback) and Supabase PostgreSQL via DATABASE_URL.
+Supabase PostgreSQL is the sole, authoritative database for the project.
 Compliant with SIH PS 26263 Implementation Plan.
 """
 
 import os
+import re
+import sys
 from pathlib import Path
 from typing import Generator, Dict, Any, Optional
 from dotenv import load_dotenv
@@ -24,101 +26,74 @@ load_dotenv(_root_dir / ".env")
 load_dotenv(_app_dir / ".env")
 load_dotenv()  # Fallback to current working directory
 
-# Resolve database URL from either DATABASE_URL or DB_URL, or use disposable test db
-TEST_DB_FILENAME = "test_apaar.db"
-PRIMARY_DB_FILENAME = "apaar.db"
-TEST_DB_PATH = _root_dir / TEST_DB_FILENAME
-PRIMARY_DB_PATH = _root_dir / PRIMARY_DB_FILENAME
-
-import sys
-import re
-import shutil
-
-IS_TESTING = (
-    (
-        os.getenv("TESTING", "").lower() in ("1", "true", "yes")
-        or "pytest" in sys.modules
-        or any("unittest" in arg or "test" in Path(arg).name.lower() for arg in sys.argv)
-    )
-    and not os.getenv("ALLOW_POSTGRES_TEST", "").lower() in ("1", "true", "yes")
+# ---------------------------------------------------------------------------
+# Authoritative Database URL Resolution (Supabase PostgreSQL)
+# ---------------------------------------------------------------------------
+DATABASE_URL = (
+    os.getenv("SUPABASE_DATABASE_URL")
+    or os.getenv("DATABASE_URL")
+    or os.getenv("POSTGRES_URL")
 )
+
+if not DATABASE_URL or not any(
+    DATABASE_URL.startswith(p)
+    for p in ("postgresql://", "postgres://", "postgresql+")
+):
+    raise RuntimeError(
+        "Supabase PostgreSQL is the authoritative database for APAAR Verify. "
+        "Please provide a valid PostgreSQL connection URL in SUPABASE_DATABASE_URL or DATABASE_URL."
+    )
+
+# Normalize legacy postgres:// scheme and select available DBAPI driver
+driver = None
+try:
+    import psycopg  # psycopg v3 (default in requirements.txt)
+    driver = "psycopg"
+except ImportError:
+    try:
+        import psycopg2  # psycopg2 fallback
+        driver = "psycopg2"
+    except ImportError:
+        pass
+
+if DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://"):
+    target_driver = f"+{driver}" if driver else ""
+    DATABASE_URL = re.sub(r"^postgres(?:ql)?://", f"postgresql{target_driver}://", DATABASE_URL)
+
+IS_POSTGRES = True
+IS_SQLITE = False
 
 
 def init_test_db(force_refresh: bool = False) -> None:
     """
-    Initializes a disposable SQLite test database (test_apaar.db).
-    Copies seeded data from apaar.db if available to preserve baseline test fixtures,
-    preventing any automated test suite from modifying primary apaar.db.
+    Backwards compatibility stub.
+    Supabase PostgreSQL is the sole authoritative database; no local test DB initialization required.
     """
-    if PRIMARY_DB_PATH.exists() and (force_refresh or not TEST_DB_PATH.exists()):
-        try:
-            if "engine" in globals():
-                engine.dispose()
-        except Exception:
-            pass
-        shutil.copyfile(PRIMARY_DB_PATH, TEST_DB_PATH)
+    pass
 
-
-if IS_TESTING:
-    init_test_db(force_refresh=False)
-    DATABASE_URL = f"sqlite:///{TEST_DB_FILENAME}"
-else:
-    # Explicit environment-controlled selection:
-    # Default is SQLite (apaar.db). PostgreSQL / Supabase is activated ONLY when
-    # DB_TARGET or USE_SUPABASE is explicitly set to point to postgresql/supabase.
-    db_target = os.getenv("DB_TARGET", "sqlite").lower()
-    use_supabase = os.getenv("USE_SUPABASE", "").lower() in ("1", "true", "yes")
-
-    if db_target in ("supabase", "postgres", "postgresql") or use_supabase:
-        DATABASE_URL = os.getenv("SUPABASE_DATABASE_URL") or os.getenv("POSTGRES_URL") or os.getenv("DATABASE_URL")
-        if not DATABASE_URL or not any(DATABASE_URL.startswith(p) for p in ("postgresql://", "postgres://", "postgresql+")):
-            raise RuntimeError(
-                "PostgreSQL / Supabase selected via DB_TARGET, but no valid PostgreSQL connection URL found "
-                "in SUPABASE_DATABASE_URL, POSTGRES_URL, or DATABASE_URL."
-            )
-    else:
-        # Default mode: SQLite apaar.db
-        DATABASE_URL = os.getenv("LOCAL_DATABASE_URL") or "sqlite:///apaar.db"
-
-# Normalise legacy postgres:// scheme to postgresql://
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-IS_POSTGRES = DATABASE_URL.startswith("postgresql")
-IS_SQLITE = DATABASE_URL.startswith("sqlite")
 
 # ---------------------------------------------------------------------------
-# Engine Configuration
+# Supabase PostgreSQL Engine Configuration
 # ---------------------------------------------------------------------------
-LOCAL_SQLITE_URL = "sqlite:///apaar.db"
+# Supabase / PostgreSQL Session Pooler configuration:
+# - pool_pre_ping=True: validates connections before query execution
+# - pool_recycle=300: prevents stale connections dropped by pooler (5 min timeout)
+# - pool_size & max_overflow: handles concurrent requests smoothly
+# - prepare_threshold=None: disables client-side prepared statements on transaction poolers (:6543)
+pg_connect_args = {}
+if ":6543" in DATABASE_URL:
+    pg_connect_args["prepare_threshold"] = None
 
-if IS_SQLITE:
-    engine = create_engine(
-        DATABASE_URL,
-        echo=False,
-        connect_args={"check_same_thread": False},
-    )
-    fallback_engine = engine
-else:
-    # Supabase / PostgreSQL Session Pooler configuration:
-    # - pool_pre_ping=True: validates connections before query execution
-    # - pool_recycle=300: prevents stale connections dropped by pooler (5 min timeout)
-    # - pool_size & max_overflow: handles concurrent requests smoothly
-    # - prepare_threshold=None: disables client-side prepared statements on transaction poolers (:6543)
-    pg_connect_args = {}
-    if ":6543" in DATABASE_URL:
-        pg_connect_args["prepare_threshold"] = None
-
-    engine = create_engine(
-        DATABASE_URL,
-        echo=False,
-        pool_pre_ping=True,
-        pool_recycle=300,
-        pool_size=10,
-        max_overflow=20,
-        connect_args=pg_connect_args,
-    )
-    fallback_engine = engine
+engine = create_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    pool_size=10,
+    max_overflow=20,
+    connect_args=pg_connect_args,
+)
+fallback_engine = engine
 
 # ---------------------------------------------------------------------------
 # Model Imports for Metadata Registration
@@ -150,9 +125,6 @@ DEFAULT_SYSTEM_SETTINGS = {
 
 def init_default_settings(session: Session) -> None:
     """Ensure baseline system threshold settings exist in the database."""
-    if IS_POSTGRES:
-        # CRITICAL SAFETY GUARD: Do not mutate settings on remote PostgreSQL / Supabase
-        return
     try:
         existing_keys = {
             s.key for s in session.exec(select(Setting)).all()
@@ -164,16 +136,15 @@ def init_default_settings(session: Session) -> None:
                 added = True
         if added:
             session.commit()
-    except Exception as e:
-        # Avoid crashing startup if table is not yet accessible
+    except Exception:
         session.rollback()
 
 
 def create_db_and_tables():
-    """Create all registered SQLModel tables and ensure baseline settings."""
-    if IS_POSTGRES:
-        # CRITICAL SAFETY GUARD: Never run DDL create_all or mutate settings on Supabase
-        return
+    """
+    Ensure all registered SQLModel tables exist on Supabase PostgreSQL.
+    SQLModel.metadata.create_all uses checkfirst=True by default to only create missing tables safely.
+    """
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         init_default_settings(session)
@@ -181,18 +152,12 @@ def create_db_and_tables():
 
 def reset_db():
     """
-    Drop all tables and recreate them cleanly.
-    SAFETY GUARD: Resetting a shared PostgreSQL/Supabase database is strictly prohibited.
+    SAFETY GUARD: Resetting the live Supabase PostgreSQL database is strictly prohibited.
     """
-    if IS_POSTGRES:
-        raise RuntimeError(
-            "CRITICAL SAFETY GUARD: reset_db() is strictly prohibited on PostgreSQL / Supabase "
-            "to prevent accidental deletion or modification of shared remote datasets."
-        )
-    SQLModel.metadata.drop_all(engine)
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
-        init_default_settings(session)
+    raise RuntimeError(
+        "CRITICAL SAFETY GUARD: reset_db() is strictly prohibited on PostgreSQL / Supabase "
+        "to prevent accidental deletion or modification of remote datasets."
+    )
 
 
 def get_session() -> Generator[Session, None, None]:
@@ -222,11 +187,11 @@ def redact_credentials(text_or_url: str) -> str:
 
 def get_sanitized_database_name() -> str:
     """
-    Extract safe database identifier (e.g. 'apaar.db' or 'postgres')
+    Extract safe database identifier (e.g. 'postgres')
     without complete connection URLs, hostnames, usernames, or passwords.
     """
     if not engine.url.database:
-        return "apaar.db"
+        return "postgres"
     return Path(engine.url.database).name
 
 
@@ -237,36 +202,13 @@ def check_db_connection() -> Dict[str, Any]:
     Never returns a complete database connection URL.
     """
     safe_db = get_sanitized_database_name()
-
-    if IS_POSTGRES:
-        try:
-            with engine.connect() as conn:
-                version = conn.execute(text("SELECT version();")).scalar()
-                return {
-                    "status": "healthy",
-                    "mode": "primary (supabase postgresql)",
-                    "dialect": "postgresql",
-                    "database": safe_db,
-                    "connected": True,
-                    "version": version,
-                }
-        except Exception as e:
-            return {
-                "status": "unhealthy",
-                "mode": "primary (supabase postgresql)",
-                "dialect": "postgresql",
-                "database": safe_db,
-                "connected": False,
-                "error": redact_credentials(str(e)),
-            }
-
     try:
         with engine.connect() as conn:
-            version = conn.execute(text("SELECT sqlite_version();")).scalar()
+            version = conn.execute(text("SELECT version();")).scalar()
             return {
                 "status": "healthy",
-                "mode": "sqlite",
-                "dialect": "sqlite",
+                "mode": "supabase_postgresql",
+                "dialect": "postgresql",
                 "database": safe_db,
                 "connected": True,
                 "version": version,
@@ -274,8 +216,8 @@ def check_db_connection() -> Dict[str, Any]:
     except Exception as e:
         return {
             "status": "unhealthy",
-            "mode": "sqlite",
-            "dialect": "sqlite",
+            "mode": "supabase_postgresql",
+            "dialect": "postgresql",
             "database": safe_db,
             "connected": False,
             "error": redact_credentials(str(e)),

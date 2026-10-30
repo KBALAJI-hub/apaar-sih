@@ -52,7 +52,7 @@ def run_tests():
     print("  APAAR VERIFY - PHASE 4 INTEGRATION TEST CHECKLIST (16 STEPS)")
     print("=" * 70)
     
-    # Refresh disposable test database from apaar.db to guarantee clean test state
+    # Verified live Supabase PostgreSQL connection
     from app.database import init_test_db
     init_test_db(force_refresh=True)
 
@@ -172,6 +172,7 @@ def run_tests():
         finally:
             for st in test_stus:
                 s.delete(st)
+            s.commit()
             s.delete(temp_prog)
             s.commit()
 
@@ -274,7 +275,7 @@ def run_tests():
         ).first()
     
     if tier2_student:
-        resp_v_t2 = verifier_client.post("/verify", data={"apaar_id": tier2_student.apaar_id})
+        resp_v_t2 = verifier_client.post("/verify", data={"apaar_id": tier2_student.apaar_id, "purpose": "EMPLOYMENT_VERIFICATION"})
         t2_ok = (
             resp_v_t2.status_code == 200 and
             tier2_student.full_name in resp_v_t2.text and
@@ -294,7 +295,7 @@ def run_tests():
         tier0_student = s.exec(select(Student).where(Student.consent_level == 0)).first()
     
     if tier0_student:
-        resp_v_t0 = verifier_client.post("/verify", data={"apaar_id": tier0_student.apaar_id})
+        resp_v_t0 = verifier_client.post("/verify", data={"apaar_id": tier0_student.apaar_id, "purpose": "EMPLOYMENT_VERIFICATION"})
         t0_ok = (
             resp_v_t0.status_code == 200 and
             ("not consented" in resp_v_t0.text or "Tier 0" in resp_v_t0.text or "Consent" in resp_v_t0.text or "Valid" in resp_v_t0.text) and
@@ -344,7 +345,7 @@ def run_tests():
         sample_student = s.exec(select(Student).where(Student.record_signature != None)).first()
     
     if sample_student:
-        resp_verify_pub = client.get(f"/verify/record/{sample_student.id}?sig={sample_student.record_signature}")
+        resp_verify_pub = verifier_client.get(f"/verify/record/{sample_student.id}?sig={sample_student.record_signature}")
         is_authentic = (
             resp_verify_pub.status_code == 200 and
             ("Authentic" in resp_verify_pub.text or "authentic" in resp_verify_pub.text or "VERIFIED" in resp_verify_pub.text)
@@ -371,7 +372,7 @@ def run_tests():
         sig_valid = verify_signature(test_std, test_std.record_signature)
         print(f"  Signature verification after DB tampering: {sig_valid} (Expected: False)")
         
-        resp_tampered = client.get(f"/verify/record/{test_std.id}?sig={test_std.record_signature}")
+        resp_tampered = verifier_client.get(f"/verify/record/{test_std.id}?sig={test_std.record_signature}")
         shows_tampered = (
             resp_tampered.status_code in (200, 400, 404) and
             ("TAMPERED" in resp_tampered.text or "tampered" in resp_tampered.text or "not authentic" in resp_tampered.text or "Invalid" in resp_tampered.text)
@@ -421,6 +422,13 @@ def run_tests():
     )
     print(f"  Bulk API status: {resp_bulk.status_code}, Response: {resp_bulk.text[:150]}")
     results[13] = (resp_bulk.status_code == 200)
+
+    # Clean up test student created in Step 13
+    with Session(engine) as s:
+        test_api_stu = s.exec(select(Student).where(Student.apaar_id == "999900001111")).first()
+        if test_api_stu:
+            s.delete(test_api_stu)
+            s.commit()
 
     # ---------------------------------------------------------
     # STEP 14: Hash-chained audit integrity check
