@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Certificate · {{ student.full_name }}{% endblock %}
+{% block title %}Certificate · {{ certificate.full_name if certificate else student.full_name }}{% endblock %}
 
 {% block head %}
 <style>
@@ -23,34 +23,34 @@
 
 <div class="cert max-w-4xl mx-auto bg-white border-8 border-double border-indigo-900 shadow-lg p-10 text-center">
   <div class="text-xs tracking-widest uppercase text-slate-500">All India Council for Technical Education · APAAR Verified</div>
-  <h1 class="text-3xl font-serif font-bold text-indigo-900 mt-2">{{ institution.name }}</h1>
-  <p class="text-sm text-slate-500">{{ institution.state }} · AICTE ID {{ institution.aicte_id }}</p>
+  <h1 class="text-3xl font-serif font-bold text-indigo-900 mt-2">{{ certificate.institution_name if certificate else institution.name }}</h1>
+  <p class="text-sm text-slate-500">{{ certificate.institution_state if certificate else institution.state }} · AICTE ID {{ certificate.institution_aicte_id if certificate else institution.aicte_id }}</p>
 
   <div class="my-6 text-slate-600">This is to certify that</div>
-  <div class="text-4xl font-serif font-bold text-slate-900">{{ student.full_name }}</div>
+  <div class="text-4xl font-serif font-bold text-slate-900">{{ certificate.full_name if certificate else student.full_name }}</div>
 
   <div class="my-4 text-slate-600">is enrolled in</div>
-  <div class="text-2xl font-semibold text-indigo-800">{{ program.name }}</div>
-  <div class="text-slate-600 mt-1">Admission year {{ student.admission_year }}</div>
+  <div class="text-2xl font-semibold text-indigo-800">{{ certificate.program_name if certificate else program.name }}</div>
+  <div class="text-slate-600 mt-1">Admission year {{ certificate.admission_year if certificate else student.admission_year }}</div>
 
   <!-- Student ID | APAAR ID, shown prominently -->
   <div class="inline-block mt-6 border-2 border-indigo-900 rounded px-6 py-3">
     <div class="text-xs uppercase text-slate-500">Student ID &nbsp;|&nbsp; APAAR ID</div>
     <div class="text-2xl font-mono font-bold text-indigo-900">
-      {{ student.student_id }} &nbsp;|&nbsp; {{ student.apaar_id }}
+      {{ certificate.student_id if certificate else student.student_id }} &nbsp;|&nbsp; {{ certificate.apaar_id if certificate else student.apaar_id }}
     </div>
   </div>
 
   <div class="mt-8 flex items-end justify-between text-left">
     <div class="text-xs text-slate-500 max-w-md">
       <div class="font-semibold text-slate-700 mb-1">Digital signature (Ed25519)</div>
-      <div class="font-mono break-all">{{ (signature or student.record_signature or '')[:48] }}{% if (signature or student.record_signature or '')|length > 48 %}...{% endif %}</div>
+      <div class="font-mono break-all">{{ certificate.signature_snippet if certificate else ((signature or student.record_signature or '')[:48] ~ '...') }}</div>
       <div class="mt-2">Scan the QR code, or open the link below, to check this record's authenticity.</div>
-      <div class="font-mono break-all mt-1">{{ verify_url }}</div>
+      <div class="font-mono break-all mt-1">{{ certificate.verify_url if certificate else verify_url }}</div>
     </div>
     <div class="text-center">
-      {% if qr_src %}
-        <img src="{{ qr_src }}" alt="Verification QR code" class="w-32 h-32 mx-auto">
+      {% if (certificate and certificate.qr_src) or qr_src %}
+        <img src="{{ certificate.qr_src if certificate else qr_src }}" alt="Verification QR code" class="w-32 h-32 mx-auto">
       {% else %}
         <div class="w-32 h-32 border-2 border-dashed flex items-center justify-center text-xs text-slate-400">QR here</div>
       {% endif %}

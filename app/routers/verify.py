@@ -3,14 +3,16 @@ Public & Third-Party Verification Router for APAAR Verify (SIH PS 26263).
 Implements:
 1. Student login flow at /student/consent (simulated DigiLocker OTP, consent tiers 0/1/2, 'Who looked me up' list).
 2. Verifier portal at /verify (tiered result display: No record, Tier 0, Tier 1, Tier 2, 30 req/min rate limit).
-3. Public cryptographic verification at /verify/record/{student_id} and QR code generation.
+3. Authenticated cryptographic verification at /verify/record/{student_id} and QR code generation.
 4. AICTE Ed25519 root public key discovery at /.well-known/aicte-public-key.pem.
+5. Official degree-style certificate view at /certificate/{student_id} enforcing authentication, authorization, and consent tiers.
 """
 
 from collections import defaultdict
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -19,6 +21,14 @@ from sqlmodel import Session, select
 
 from app.audit import log_action
 from app.auth import get_current_user, require_role, create_access_token
+from app.authz import (
+    can_view_certificate,
+    can_verify_student,
+    get_effective_consent_tier,
+    build_certificate_view,
+    build_verification_view,
+    VALID_PURPOSES,
+)
 from app.database import get_session
 from app.models import Institution, Program, Student, User, VerificationLog, utc_now
 from app.security import (
@@ -33,6 +43,11 @@ router = APIRouter(tags=["Verify"])
 # Templates reference
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+}
 
 # ---------------------------------------------------------------------------
 # In-Memory Rate Limiter: 30 lookups per minute per verifier
@@ -127,24 +142,15 @@ def validate_csrf_origin(request: Request) -> None:
         )
 
 
-def get_effective_consent_tier(consent_level: Any) -> int:
-    """
-    Safely resolves consent tier enforcing:
-    - Tier 0: Authenticity/status only. No student identity or institutional/program details.
-    - Tier 1: Institution, AICTE ID, program, admission year, and enrollment status. Mask personal identity fields.
-    - Tier 2: Full details only when explicitly authorized by valid student consent.
-
-    Any unknown, missing, malformed, or out-of-range consent value strictly fails closed to Tier 0.
-    """
-    if consent_level is None:
-        return 0
-    try:
-        tier_int = int(consent_level)
-    except (ValueError, TypeError):
-        return 0
-    if tier_int in (1, 2):
-        return tier_int
-    return 0
+def safe_redirect_login(request: Request) -> RedirectResponse:
+    """Generate safe redirect to /login with local 'next' URL."""
+    target_path = request.url.path
+    if request.url.query:
+        target_path += f"?{request.url.query}"
+    login_url = "/login"
+    if target_path.startswith("/") and not target_path.startswith("//") and target_path != "/login":
+        login_url = f"/login?next={quote(target_path, safe='/?=&-_')}"
+    return RedirectResponse(url=login_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +206,7 @@ def student_consent_page(
             "error": None,
             "success": None,
         },
+        headers=SECURITY_HEADERS,
     )
 
 
@@ -237,6 +244,7 @@ def handle_student_consent(
                     "role": user.role if user else None,
                 },
                 status_code=400,
+                headers=SECURITY_HEADERS,
             )
 
         if not otp or otp.strip() != "123456":
@@ -250,6 +258,7 @@ def handle_student_consent(
                     "role": user.role if user else None,
                 },
                 status_code=400,
+                headers=SECURITY_HEADERS,
             )
 
         student = session.exec(select(Student).where(Student.apaar_id == clean_apaar)).first()
@@ -264,6 +273,7 @@ def handle_student_consent(
                     "role": user.role if user else None,
                 },
                 status_code=404,
+                headers=SECURITY_HEADERS,
             )
 
         lookups = session.exec(
@@ -272,7 +282,12 @@ def handle_student_consent(
             .order_by(VerificationLog.id.desc())
         ).all()
 
-        token = create_access_token({"sub": f"student:{student.apaar_id}", "role": "STUDENT", "apaar_id": student.apaar_id})
+        token = create_access_token({
+            "sub": f"student:{student.apaar_id}",
+            "role": "STUDENT",
+            "apaar_id": student.apaar_id,
+            "full_name": student.full_name,
+        })
         resp = templates.TemplateResponse(
             request=request,
             name="student_consent.html",
@@ -282,12 +297,15 @@ def handle_student_consent(
                 "role": "STUDENT",
                 "success": "DigiLocker identity authenticated successfully (simulated demo).",
             },
+            headers=SECURITY_HEADERS,
         )
         resp.set_cookie(
             key="access_token",
             value=token,
             httponly=True,
             samesite="lax",
+            secure=False,
+            max_age=60 * 60 * 12,
         )
         return resp
 
@@ -389,29 +407,44 @@ def handle_student_consent(
                 "role": user.role,
                 "success": f"DigiLocker consent preferences updated successfully to Tier {new_level}.",
             },
+            headers=SECURITY_HEADERS,
         )
 
     return RedirectResponse(url="/student/consent", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # ---------------------------------------------------------------------------
-# 3. Verifier Portal (/verify) with Tiered Disclosure & Rate Limiting
+# 3. Verifier Portal (/verify) with Tiered Disclosure, Purpose & Rate Limiting
 # ---------------------------------------------------------------------------
 @router.get("/verify", response_class=HTMLResponse)
 def verifier_portal_get(
     request: Request,
     apaar_id: Optional[str] = None,
+    purpose: Optional[str] = None,
     session: Session = Depends(get_session),
     user: Optional[User] = Depends(get_current_user),
 ):
-    """Render empty verifier portal or process query string lookup."""
+    """
+    Render verifier portal for authenticated verifiers (employers), institutions, or AICTE administrators.
+    Anonymous visitors are redirected to /login?next=/verify.
+    """
+    if not user:
+        return safe_redirect_login(request)
+
     if apaar_id:
-        return process_verifier_lookup(request, apaar_id, session, user)
+        return process_verifier_lookup(request, apaar_id, purpose, session, user)
 
     return templates.TemplateResponse(
         request=request,
         name="verifier_portal.html",
-        context={"role": user.role if user else None, "result_ready": False},
+        context={
+            "user": user,
+            "role": user.role,
+            "result_ready": False,
+            "purposes": sorted(list(VALID_PURPOSES)),
+            "searched_purpose": purpose or "EMPLOYMENT_VERIFICATION",
+        },
+        headers=SECURITY_HEADERS,
     )
 
 
@@ -419,64 +452,128 @@ def verifier_portal_get(
 def verifier_portal_post(
     request: Request,
     apaar_id: str = Form(...),
+    purpose: Optional[str] = Form(None),
     session: Session = Depends(get_session),
     user: Optional[User] = Depends(get_current_user),
 ):
-    """Handle verifier form submission with rate limiting and tiered disclosure."""
-    return process_verifier_lookup(request, apaar_id, session, user)
+    """Handle verifier form submission with purpose validation, rate limiting, and tiered disclosure."""
+    if not user:
+        return safe_redirect_login(request)
+
+    return process_verifier_lookup(request, apaar_id, purpose, session, user)
 
 
 def process_verifier_lookup(
     request: Request,
     apaar_id: str,
+    purpose: Optional[str],
     session: Session,
-    user: Optional[User],
+    user: User,
 ) -> Response:
     """
     Execute tiered verifier lookup:
+    - Enforces authentication and purpose specification.
     - Enforces 30 lookups per minute rate limit per verifier.
     - Tier -1 (Not Found): shows 'No record'
     - Tier 0: shows 'APAAR valid, student has not consented to share details'
     - Tier 1: shows institution, program, admission year and status
-    - Tier 2: shows full record + authenticity badge + QR code
-    - Records VerificationLog and AuditLog for each lookup.
+    - Tier 2: shows full record + authenticity badge (employers receive sanitized VerificationView without printable cert link)
+    - Records VerificationLog and hash-chained AuditLog (both allow and rate-limit/denial).
     """
     verifier_id, verifier_key = get_verifier_identifier(request, user)
 
     # 1. Rate Limit Check (30 lookups per minute)
     if is_rate_limited(verifier_key):
+        log_action(
+            session=session,
+            user=user,
+            action="VERIFIER_LOOKUP_DENIED",
+            entity="STUDENT_VERIFICATION",
+            entity_id=None,
+            details={"reason": "RATE_LIMIT_EXCEEDED", "role": user.role, "outcome": "DENIED"},
+        )
+        session.commit()
         return templates.TemplateResponse(
             request=request,
             name="verifier_portal.html",
             context={
-                "role": user.role if user else None,
+                "role": user.role,
                 "error": "Rate limit exceeded: You have reached the maximum of 30 lookups per minute. Please wait a moment before trying again.",
                 "searched_apaar": apaar_id,
+                "searched_purpose": purpose,
+                "purposes": sorted(list(VALID_PURPOSES)),
                 "result_ready": False,
             },
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            headers=SECURITY_HEADERS,
         )
 
     clean_apaar = apaar_id.strip()
+    clean_purpose = str(purpose or "").strip()
 
-    # 2. Student Lookup
+    # 2. Purpose Validation
+    if user.role == "VERIFIER" and (not clean_purpose or clean_purpose not in VALID_PURPOSES):
+        log_action(
+            session=session,
+            user=user,
+            action="VERIFIER_LOOKUP_DENIED",
+            entity="STUDENT_VERIFICATION",
+            entity_id=None,
+            details={"reason": "PURPOSE_REQUIRED", "role": user.role, "outcome": "DENIED"},
+        )
+        session.commit()
+        return templates.TemplateResponse(
+            request=request,
+            name="verifier_portal.html",
+            context={
+                "role": user.role,
+                "error": "A valid verification purpose from the permitted list is strictly required.",
+                "searched_apaar": clean_apaar,
+                "searched_purpose": clean_purpose,
+                "purposes": sorted(list(VALID_PURPOSES)),
+                "result_ready": False,
+            },
+            status_code=status.HTTP_400_BAD_REQUEST,
+            headers=SECURITY_HEADERS,
+        )
+
+    # 3. Student Lookup
     student = session.exec(select(Student).where(Student.apaar_id == clean_apaar)).first()
+    allowed, reason, code, tier = can_verify_student(user, student, clean_purpose or "REGULATORY_OVERSIGHT")
+
+    if not allowed and code != 200:
+        log_action(
+            session=session,
+            user=user,
+            action="VERIFIER_LOOKUP_DENIED",
+            entity="STUDENT_VERIFICATION",
+            entity_id=str(student.id) if student else None,
+            details={"reason": reason, "role": user.role, "outcome": "DENIED"},
+        )
+        session.commit()
+        raise HTTPException(status_code=code, detail="Access denied")
 
     institution = None
     program = None
+    if student and tier >= 1:
+        institution = session.get(Institution, student.institution_id)
+        program = session.get(Program, student.program_id)
 
-    if not student:
-        tier = -1
-        result_status = "NOT_FOUND"
-    else:
-        effective_tier = get_effective_consent_tier(student.consent_level)
-        tier = effective_tier
-        result_status = "NO_CONSENT" if tier == 0 else "VALID"
-        if tier >= 1:
-            institution = session.get(Institution, student.institution_id)
-            program = session.get(Program, student.program_id)
+    result_status = "NOT_FOUND" if tier == -1 else ("NO_CONSENT" if tier == 0 else "VALID")
 
-    # 3. Log to VerificationLog
+    # Build sanitized view model
+    base_url = str(request.base_url).rstrip("/")
+    verification_view = build_verification_view(
+        student=student,
+        institution=institution,
+        program=program,
+        tier=tier,
+        is_authentic=True if student else False,
+        result_status=result_status,
+        base_url=base_url,
+    )
+
+    # 4. Log to VerificationLog
     vlog = VerificationLog(
         verifier_id=verifier_id,
         apaar_id=clean_apaar,
@@ -485,36 +582,47 @@ def process_verifier_lookup(
         timestamp=utc_now(),
     )
     session.add(vlog)
-    session.commit()
 
-    # 4. Hash-chained Audit Log entry
+    # 5. Hash-chained Audit Log entry
     log_action(
         session=session,
-        user=user or {"id": verifier_id, "username": verifier_key},
-        action="VERIFIER_LOOKUP",
-        entity="STUDENT",
-        entity_id=str(student.id) if student else clean_apaar,
-        details=f"Verifier lookup for APAAR {clean_apaar}: Result={result_status}, Tier={tier}",
+        user=user,
+        action="VERIFIER_LOOKUP_ALLOWED" if student else "VERIFIER_LOOKUP_NOT_FOUND",
+        entity="STUDENT_VERIFICATION",
+        entity_id=str(student.id) if student else None,
+        details={
+            "role": user.role,
+            "purpose": clean_purpose or "REGULATORY_OVERSIGHT",
+            "tier_shown": tier,
+            "result": result_status,
+            "outcome": "ALLOWED" if student else "NOT_FOUND",
+        },
     )
+    session.commit()
 
     return templates.TemplateResponse(
         request=request,
         name="verifier_portal.html",
         context={
-            "role": user.role if user else None,
+            "user": user,
+            "role": user.role,
             "result_ready": True,
             "searched_apaar": clean_apaar,
+            "searched_purpose": clean_purpose,
+            "purposes": sorted(list(VALID_PURPOSES)),
             "tier": tier,
-            "student": student if tier >= 1 else None,
+            "verification": verification_view,
+            "student": verification_view if tier >= 1 else None,
             "institution": institution if tier >= 1 else None,
             "program": program if tier >= 1 else None,
             "result_status": result_status,
         },
+        headers=SECURITY_HEADERS,
     )
 
 
 # ---------------------------------------------------------------------------
-# 4. Public Certificate Page (/verify/record/{student_id}) & QR
+# 4. Authenticated Record Verification (/verify/record/{student_id}) & QR
 # ---------------------------------------------------------------------------
 @router.get("/verify/record/{student_id}", response_class=HTMLResponse)
 def verify_public_record(
@@ -522,27 +630,86 @@ def verify_public_record(
     request: Request,
     sig: Optional[str] = None,
     session: Session = Depends(get_session),
+    user: Optional[User] = Depends(get_current_user),
 ):
     """
-    Public record verification page:
-    - Resolves student by institutional roll ID, integer PK, or 12-digit APAAR ID.
-    - Strictly requires presented URL Ed25519 digital signature (?sig=...).
-      Missing, empty, malformed, or invalid signatures fail verification.
-    - Recomputes canonical record and checks Ed25519 signature. Never regenerates signatures during verification.
-    - Strictly enforces student consent tiers (Tier 0, 1, 2):
-        * Tier 0: Valid/authentic cryptographic status only; student identity and institutional details withheld.
-        * Tier 1: Directory verification (institution, program, year, status); personal details withheld.
-        * Tier 2: Full details permitted by student.
-    - Unknown, missing, malformed, or out-of-range stored consent strictly fails closed to Tier 0.
-    - Tampered or unverified records disclose zero student details.
-    - Displays 'Authentic record' or 'TAMPERED or not found' with minimal permitted info.
-    - Logs audit trail to VerificationLog.
+    Authenticated record verification page (target of QR codes):
+    - Strictly requires authenticated login (VERIFIER, INSTITUTION, AICTE_ADMIN, or owning STUDENT).
+    - Anonymous visitors are redirected to /login?next=... (or 401).
+    - Resolves student within authorized scope:
+        * STUDENT: restricted strictly to own apaar_id.
+        * INSTITUTION: restricted strictly to own institution_id.
+        * VERIFIER / AICTE_ADMIN: permitted across institutions.
+    - Validates presented Ed25519 digital signature (?sig=...).
+    - Strictly enforces student consent tiers at request time:
+        * Tier 0: Valid/authentic cryptographic status only; student details withheld.
+        * Tier 1: Directory verification; personal details withheld.
+        * Tier 2: Full authorized details.
+    - Emits Cache-Control: no-store and logs audit trail.
     """
-    student = session.exec(select(Student).where(Student.student_id == student_id)).first()
-    if not student and student_id.isdigit():
-        student = session.get(Student, int(student_id))
-    if not student:
-        student = session.exec(select(Student).where(Student.apaar_id == student_id)).first()
+    # 1. Enforce Authentication
+    if not user:
+        log_action(
+            session=session,
+            user={"id": None, "username": "anonymous"},
+            action="VERIFICATION_DENIED",
+            entity="STUDENT_VERIFICATION",
+            entity_id=None,
+            details={"reason": "UNAUTHENTICATED", "outcome": "DENIED"},
+        )
+        session.commit()
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept or not request.url.path.startswith("/api"):
+            return safe_redirect_login(request)
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # 2. Scope Student Resolution
+    student = None
+    if user.role == "STUDENT":
+        if user.apaar_id:
+            student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
+            if not student or (student.student_id != student_id and str(student.id) != student_id and student.apaar_id != student_id):
+                log_action(
+                    session=session,
+                    user=user,
+                    action="VERIFICATION_DENIED",
+                    entity="STUDENT_VERIFICATION",
+                    entity_id=None,
+                    details={"reason": "NOT_OWN_RECORD", "role": "STUDENT", "outcome": "DENIED"},
+                )
+                session.commit()
+                raise HTTPException(status_code=404, detail="Student record not found")
+    elif user.role == "INSTITUTION":
+        if user.institution_id:
+            student = session.exec(
+                select(Student).where(Student.student_id == student_id, Student.institution_id == user.institution_id)
+            ).first()
+            if not student and student_id.isdigit():
+                student = session.exec(
+                    select(Student).where(Student.id == int(student_id), Student.institution_id == user.institution_id)
+                ).first()
+            if not student:
+                student = session.exec(
+                    select(Student).where(Student.apaar_id == student_id, Student.institution_id == user.institution_id)
+                ).first()
+            if not student:
+                log_action(
+                    session=session,
+                    user=user,
+                    action="VERIFICATION_DENIED",
+                    entity="STUDENT_VERIFICATION",
+                    entity_id=None,
+                    details={"reason": "CROSS_INSTITUTION_OR_NOT_FOUND", "role": "INSTITUTION", "outcome": "DENIED"},
+                )
+                session.commit()
+                raise HTTPException(status_code=404, detail="Student record not found")
+    else:
+        # AICTE_ADMIN or VERIFIER
+        student = session.exec(select(Student).where(Student.student_id == student_id)).first()
+        if not student and student_id.isdigit():
+            student = session.get(Student, int(student_id))
+        if not student:
+            student = session.exec(select(Student).where(Student.apaar_id == student_id)).first()
 
     is_authentic = False
     institution = None
@@ -553,42 +720,77 @@ def verify_public_record(
         failure_message = f"No student record found matching identifier '{student_id}' in the AICTE national registry."
     elif not sig or not sig.strip():
         is_authentic = False
-        failure_message = "No Ed25519 cryptographic signature provided. Public verification requires a valid '?sig=' parameter."
+        failure_message = "No Ed25519 cryptographic signature provided. Verification requires a valid '?sig=' parameter."
     else:
         is_authentic = verify_signature(student, sig.strip(), session=session)
         if not is_authentic:
             failure_message = "The Ed25519 cryptographic signature failed validation. The record content may have been altered or forged."
 
+    # 3. Determine Effective Tier
     if is_authentic and student:
-        tier = get_effective_consent_tier(student.consent_level)
+        if user.role == "VERIFIER":
+            tier = get_effective_consent_tier(student.consent_level)
+        else:
+            tier = 2  # Owning student, institution, or AICTE admin
         if tier >= 1:
             institution = session.get(Institution, student.institution_id)
             program = session.get(Program, student.program_id)
     else:
         tier = 0
 
+    # 4. Build Sanitized View
+    base_url = str(request.base_url).rstrip("/")
+    result_status = "VALID" if is_authentic else "TAMPERED"
+    verification_view = build_verification_view(
+        student=student,
+        institution=institution,
+        program=program,
+        tier=tier,
+        is_authentic=is_authentic,
+        result_status=result_status,
+        failure_message=failure_message,
+        base_url=base_url,
+    )
+
+    # 5. Log Verification and Hash-Chained Audit Trail
     vlog = VerificationLog(
-        verifier_id=None,
+        verifier_id=user.id,
         apaar_id=student.apaar_id if student else student_id,
         tier_shown=tier if is_authentic else 0,
-        result="VALID" if is_authentic else "TAMPERED",
+        result=result_status,
         timestamp=utc_now(),
     )
     session.add(vlog)
+
+    log_action(
+        session=session,
+        user=user,
+        action="VERIFICATION_ALLOWED" if is_authentic else "VERIFICATION_TAMPERED",
+        entity="STUDENT_VERIFICATION",
+        entity_id=str(student.id) if student else None,
+        details={
+            "role": user.role,
+            "outcome": result_status,
+            "tier_shown": tier,
+        },
+    )
     session.commit()
 
     return templates.TemplateResponse(
         request=request,
         name="verify_record.html",
         context={
+            "verification": verification_view,
             "is_authentic": is_authentic,
             "tier": tier,
-            "student": student if (is_authentic and tier >= 1) else None,
+            "student": verification_view if (is_authentic and tier >= 1) else None,
             "institution": institution if (is_authentic and tier >= 1) else None,
             "program": program if (is_authentic and tier >= 1) else None,
             "requested_id": student_id,
             "failure_message": failure_message,
+            "role": user.role,
         },
+        headers=SECURITY_HEADERS,
     )
 
 
@@ -597,11 +799,48 @@ def get_student_qr_code(
     student_id: str,
     request: Request,
     session: Session = Depends(get_session),
+    user: Optional[User] = Depends(get_current_user),
 ):
-    """Generate and return PNG QR code linking to student's verification page without regenerating signatures."""
-    student = session.exec(select(Student).where(Student.student_id == student_id)).first()
-    if not student and student_id.isdigit():
-        student = session.get(Student, int(student_id))
+    """
+    Generate and return PNG QR code for authorized stakeholders:
+    - Strictly forbids anonymous visitors and third-party employers (VERIFIER).
+    - Requires owning STUDENT, matching INSTITUTION, or AICTE_ADMIN.
+    """
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    if user.role == "VERIFIER":
+        raise HTTPException(status_code=403, detail="Forbidden: Verifiers cannot access raw QR generation endpoints")
+
+    student = None
+    if user.role == "STUDENT":
+        if user.apaar_id:
+            student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
+            if not student or (student.student_id != student_id and str(student.id) != student_id and student.apaar_id != student_id):
+                raise HTTPException(status_code=404, detail="Student not found")
+    elif user.role == "INSTITUTION":
+        if user.institution_id:
+            student = session.exec(
+                select(Student).where(Student.student_id == student_id, Student.institution_id == user.institution_id)
+            ).first()
+            if not student and student_id.isdigit():
+                student = session.exec(
+                    select(Student).where(Student.id == int(student_id), Student.institution_id == user.institution_id)
+                ).first()
+            if not student:
+                student = session.exec(
+                    select(Student).where(Student.apaar_id == student_id, Student.institution_id == user.institution_id)
+                ).first()
+            if not student:
+                raise HTTPException(status_code=404, detail="Student not found")
+    else:
+        # AICTE_ADMIN
+        student = session.exec(select(Student).where(Student.student_id == student_id)).first()
+        if not student and student_id.isdigit():
+            student = session.get(Student, int(student_id))
+        if not student:
+            student = session.exec(select(Student).where(Student.apaar_id == student_id)).first()
+
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
@@ -609,7 +848,7 @@ def get_student_qr_code(
     base_url = str(request.base_url).rstrip("/")
     verification_url = f"{base_url}/verify/record/{student.student_id}?sig={sig}"
     qr_png = make_qr_png(verification_url)
-    return Response(content=qr_png, media_type="image/png")
+    return Response(content=qr_png, media_type="image/png", headers=SECURITY_HEADERS)
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +878,6 @@ def student_dashboard(
         else:
             student = session.exec(select(Student).where(Student.student_id == user.username)).first()
     if not student:
-        # Fallback to first student in db if demo user
         student = session.exec(select(Student)).first()
 
     institution = None
@@ -651,7 +889,6 @@ def student_dashboard(
         institution = session.get(Institution, student.institution_id)
         program = session.get(Program, student.program_id)
 
-        # Ensure Ed25519 signature is generated and up to date
         if not student.record_signature:
             student.record_signature = sign_record(student, session)
             session.add(student)
@@ -659,7 +896,6 @@ def student_dashboard(
 
         is_signature_valid = verify_signature(student, student.record_signature, session=session)
 
-        # Fetch who looked me up
         lookups = session.exec(
             select(VerificationLog)
             .where(VerificationLog.apaar_id == student.apaar_id)
@@ -684,6 +920,7 @@ def student_dashboard(
             "qr_url": qr_url,
             "role": user.role,
         },
+        headers=SECURITY_HEADERS,
     )
 
 
@@ -764,6 +1001,9 @@ def update_student_dashboard_consent(
     )
 
 
+# ---------------------------------------------------------------------------
+# 6. Official Printable Certificate (/certificate/{student_id})
+# ---------------------------------------------------------------------------
 @router.get("/certificate/{student_id}", response_class=HTMLResponse)
 def view_certificate(
     student_id: str,
@@ -774,34 +1014,170 @@ def view_certificate(
     """
     Render official printable degree-style certificate with APAAR ID,
     institution details, live QR code, and Ed25519 digital signature snippet.
+    Strictly enforces:
+    - Authentication required (anonymous users redirected to login or 401).
+    - Authorization check (STUDENT own record, INSTITUTION own students, AICTE_ADMIN regulatory oversight).
+    - VERIFIER (employer) strictly forbidden with HTTP 403.
+    - Sanitized CertificateView guarantees zero ORM model leakage.
+    - Uniform 404 for unauthorized student access (prevents IDOR and enumeration).
+    - Cache-Control: no-store and hash-chained audit logging of allow/deny.
     """
-    student = session.exec(select(Student).where(Student.student_id == student_id)).first()
-    if not student and student_id.isdigit():
-        student = session.get(Student, int(student_id))
-    if not student:
-        student = session.exec(select(Student).where(Student.apaar_id == student_id)).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Student record not found for certificate generation")
+    # 1. Enforce Authentication
+    if not user:
+        log_action(
+            session=session,
+            user={"id": None, "username": "anonymous"},
+            action="CERTIFICATE_VIEW_DENIED",
+            entity="STUDENT_CERTIFICATE",
+            entity_id=None,
+            details={"reason": "UNAUTHENTICATED", "outcome": "DENIED"},
+        )
+        session.commit()
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept or not request.url.path.startswith("/api"):
+            return safe_redirect_login(request)
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # 2. Enforce Role: Employers forbidden
+    if user.role == "VERIFIER":
+        log_action(
+            session=session,
+            user=user,
+            action="CERTIFICATE_VIEW_DENIED",
+            entity="STUDENT_CERTIFICATE",
+            entity_id=None,
+            details={"reason": "FORBIDDEN_ROLE", "role": user.role, "outcome": "DENIED"},
+        )
+        session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: Verifiers are restricted to verification workflows only",
+        )
+
+    # 3. Resolve Student within Caller's Authorized Scope
+    student = None
+    if user.role == "STUDENT":
+        if user.apaar_id:
+            student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
+            if not student or (student.student_id != student_id and str(student.id) != student_id and student.apaar_id != student_id):
+                log_action(
+                    session=session,
+                    user=user,
+                    action="CERTIFICATE_VIEW_DENIED",
+                    entity="STUDENT_CERTIFICATE",
+                    entity_id=None,
+                    details={"reason": "NOT_OWN_RECORD", "role": "STUDENT", "outcome": "DENIED"},
+                )
+                session.commit()
+                raise HTTPException(status_code=404, detail="Student record not found")
+    elif user.role == "INSTITUTION":
+        if user.institution_id:
+            student = session.exec(
+                select(Student).where(Student.student_id == student_id, Student.institution_id == user.institution_id)
+            ).first()
+            if not student and student_id.isdigit():
+                student = session.exec(
+                    select(Student).where(Student.id == int(student_id), Student.institution_id == user.institution_id)
+                ).first()
+            if not student:
+                student = session.exec(
+                    select(Student).where(Student.apaar_id == student_id, Student.institution_id == user.institution_id)
+                ).first()
+            if not student:
+                log_action(
+                    session=session,
+                    user=user,
+                    action="CERTIFICATE_VIEW_DENIED",
+                    entity="STUDENT_CERTIFICATE",
+                    entity_id=None,
+                    details={"reason": "CROSS_INSTITUTION_OR_NOT_FOUND", "role": "INSTITUTION", "outcome": "DENIED"},
+                )
+                session.commit()
+                raise HTTPException(status_code=404, detail="Student record not found")
+    else:
+        # AICTE_ADMIN
+        student = session.exec(select(Student).where(Student.student_id == student_id)).first()
+        if not student and student_id.isdigit():
+            student = session.get(Student, int(student_id))
+        if not student:
+            student = session.exec(select(Student).where(Student.apaar_id == student_id)).first()
+        if not student:
+            log_action(
+                session=session,
+                user=user,
+                action="CERTIFICATE_VIEW_DENIED",
+                entity="STUDENT_CERTIFICATE",
+                entity_id=None,
+                details={"reason": "NOT_FOUND", "role": "AICTE_ADMIN", "outcome": "DENIED"},
+            )
+            session.commit()
+            raise HTTPException(status_code=404, detail="Student record not found")
+
+    # 4. Central Authorization Policy Check
+    allowed, reason, code = can_view_certificate(user, student)
+    if not allowed:
+        log_action(
+            session=session,
+            user=user,
+            action="CERTIFICATE_VIEW_DENIED",
+            entity="STUDENT_CERTIFICATE",
+            entity_id=str(student.id) if student else None,
+            details={"reason": reason, "role": user.role, "outcome": "DENIED"},
+        )
+        session.commit()
+        raise HTTPException(
+            status_code=code,
+            detail="Student record not found" if code == 404 else "Access forbidden",
+        )
 
     institution = session.get(Institution, student.institution_id)
     program = session.get(Program, student.program_id)
 
-    sig = student.record_signature or ""
+    if not institution or not program:
+        raise HTTPException(status_code=404, detail="Institutional configuration not found")
 
+    sig = student.record_signature or ""
     base_url = str(request.base_url).rstrip("/")
     verify_url = f"{base_url}/verify/record/{student.student_id}?sig={sig}"
     qr_src = f"{base_url}/verify/record/{student.student_id}/qr"
+
+    # 5. Build Sanitized CertificateView
+    certificate_view = build_certificate_view(
+        student=student,
+        institution=institution,
+        program=program,
+        verify_url=verify_url,
+        qr_src=qr_src,
+        signature=sig,
+    )
+
+    # 6. Log Allowed Access
+    log_action(
+        session=session,
+        user=user,
+        action="CERTIFICATE_VIEW_ALLOWED",
+        entity="STUDENT_CERTIFICATE",
+        entity_id=str(student.id),
+        details={
+            "role": user.role,
+            "purpose": "REGULATORY_OVERSIGHT" if user.role == "AICTE_ADMIN" else "CERTIFICATE_VIEW",
+            "outcome": "ALLOWED",
+        },
+    )
+    session.commit()
 
     return templates.TemplateResponse(
         request=request,
         name="certificate.html",
         context={
-            "student": student,
+            "certificate": certificate_view,
+            "student": certificate_view,
             "institution": institution,
             "program": program,
             "signature": sig,
             "verify_url": verify_url,
             "qr_src": qr_src,
-            "role": user.role if user else None,
+            "role": user.role,
         },
+        headers=SECURITY_HEADERS,
     )

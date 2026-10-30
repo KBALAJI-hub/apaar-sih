@@ -32,7 +32,8 @@
     </div>
     {% endif %}
 
-    <form id="login-form" method="post" action="/login" class="auth-form">
+    <form id="login-form" method="post" action="/login{% if request.query_params.get('next') %}?next={{ request.query_params.get('next') }}{% endif %}" class="auth-form">
+      <input type="hidden" name="next" value="{{ request.query_params.get('next') or '' }}">
       <label for="username">Username
         <input id="username" name="username" type="text" required autofocus autocomplete="username" placeholder="Enter your username">
       </label>
