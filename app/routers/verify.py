@@ -9,6 +9,7 @@ Implements:
 """
 
 from collections import defaultdict
+import logging
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -39,6 +40,165 @@ from app.security import (
 )
 
 router = APIRouter(tags=["Verify"])
+logger = logging.getLogger(__name__)
+
+
+def mask_identifier(identifier: Optional[str]) -> str:
+    """Mask sensitive identifier (such as APAAR ID or roll number) for safe logging."""
+    if not identifier:
+        return "<none>"
+    clean = str(identifier).strip()
+    if len(clean) <= 4:
+        return "***"
+    return f"***{clean[-4:]}"
+
+
+def resolve_authenticated_student(user: User, session: Session) -> Student:
+    """
+    Resolve the Student record for an authenticated student user.
+
+    Strict security invariant (Account-to-Record Isolation):
+    - Completely eliminates arbitrary fallbacks (no select(Student).first()).
+    - Resolves student exclusively through verified identifiers on the authenticated User object.
+    - Requires exactly ONE unambiguous matching Student record.
+    - No match: returns controlled HTTP 404.
+    - Multiple matches or conflicting identifiers: rejects access with controlled HTTP 409.
+    - Missing or insufficient identity information: fails closed with controlled HTTP 400.
+    - Database errors: logs safely (without exposing full APAAR ID) and returns controlled HTTP 500.
+    """
+    if not user or user.role != "STUDENT":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: requires role 'STUDENT'",
+        )
+
+    # 1. Extract verified identifiers from authenticated user
+    auth_apaar: Optional[str] = None
+    if user.apaar_id and str(user.apaar_id).strip():
+        auth_apaar = str(user.apaar_id).strip()
+
+    username_apaar: Optional[str] = None
+    auth_student_id: Optional[str] = None
+    if user.username and str(user.username).strip():
+        u_str = str(user.username).strip()
+        if u_str.startswith("student:"):
+            parts = u_str.split(":", 1)
+            if len(parts) > 1 and parts[1].strip():
+                username_apaar = parts[1].strip()
+        else:
+            auth_student_id = u_str
+
+    # Validate identifier sufficiency: fail closed if no identifiers exist
+    if not auth_apaar and not username_apaar and not auth_student_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing or insufficient identity information to resolve student record.",
+        )
+
+    # Detect conflicting APAAR IDs within user account credentials
+    if auth_apaar and username_apaar and auth_apaar != username_apaar:
+        logger.warning(
+            "Account identifier conflict: user.apaar_id (%s) does not match username APAAR (%s)",
+            mask_identifier(auth_apaar),
+            mask_identifier(username_apaar),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conflicting account identifiers: APAAR ID mismatch in credentials.",
+        )
+
+    target_apaar = auth_apaar or username_apaar
+
+    # 2. Database lookups within a protected try/except
+    try:
+        apaar_matches: List[Student] = []
+        if target_apaar:
+            apaar_matches = session.exec(
+                select(Student).where(Student.apaar_id == target_apaar)
+            ).all()
+
+        username_matches: List[Student] = []
+        if auth_student_id:
+            username_matches = session.exec(
+                select(Student).where(Student.student_id == auth_student_id)
+            ).all()
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Database error while resolving student record for user id=%s: %s",
+            getattr(user, "id", None),
+            str(exc),
+            exc_info=False,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="A database error occurred while resolving student record.",
+        )
+
+    # 3. Check for multiple matches (duplicate records in DB)
+    if len(apaar_matches) > 1:
+        logger.warning(
+            "Data integrity violation: Multiple student records (%d) found for APAAR ID %s",
+            len(apaar_matches),
+            mask_identifier(target_apaar),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Multiple matching student records found for APAAR ID.",
+        )
+
+    if len(username_matches) > 1:
+        logger.warning(
+            "Data integrity violation: Multiple student records (%d) found for student_id %s",
+            len(username_matches),
+            mask_identifier(auth_student_id),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Multiple matching student records found for student ID.",
+        )
+
+    # 4. Check for conflicting mappings between APAAR and student_id
+    if apaar_matches and username_matches:
+        if apaar_matches[0].id != username_matches[0].id:
+            logger.warning(
+                "Conflicting student mapping: APAAR ID maps to student id=%s but username maps to student id=%s",
+                apaar_matches[0].id,
+                username_matches[0].id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Conflicting identifiers: Account identifiers map to different student records.",
+            )
+
+    # 5. Resolve candidate
+    candidate: Optional[Student] = None
+    if apaar_matches:
+        candidate = apaar_matches[0]
+    elif username_matches:
+        candidate = username_matches[0]
+
+    # Ensure candidate doesn't conflict with user's verified APAAR ID
+    if candidate and target_apaar and candidate.apaar_id != target_apaar:
+        logger.warning(
+            "Account identifier conflict: student apaar_id (%s) does not match target APAAR (%s)",
+            mask_identifier(candidate.apaar_id),
+            mask_identifier(target_apaar),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conflicting identifiers: Student APAAR ID does not match account APAAR ID.",
+        )
+
+    if not candidate:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Student record not found in AICTE registry.",
+        )
+
+    return candidate
 
 # Templates reference
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -181,14 +341,10 @@ def student_consent_page(
     lookups: List[VerificationLog] = []
 
     if user and user.role == "STUDENT":
-        if user.apaar_id:
-            student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
-        if not student and user.username:
-            if user.username.startswith("student:"):
-                auth_apaar = user.username.split(":", 1)[1]
-                student = session.exec(select(Student).where(Student.apaar_id == auth_apaar)).first()
-            else:
-                student = session.exec(select(Student).where(Student.student_id == user.username)).first()
+        try:
+            student = resolve_authenticated_student(user, session)
+        except HTTPException:
+            student = None
         if student:
             lookups = session.exec(
                 select(VerificationLog)
@@ -329,21 +485,7 @@ def handle_student_consent(
         validate_csrf_origin(request)
 
         # 4. Resolve target student strictly from validated authenticated identity
-        student = None
-        if user.apaar_id:
-            student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
-        if not student and user.username:
-            if user.username.startswith("student:"):
-                auth_apaar = user.username.split(":", 1)[1]
-                student = session.exec(select(Student).where(Student.apaar_id == auth_apaar)).first()
-            else:
-                student = session.exec(select(Student).where(Student.student_id == user.username)).first()
-
-        if not student:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Authenticated student record not found in AICTE registry.",
-            )
+        student = resolve_authenticated_student(user, session)
 
         # 5. Prevent cross-student manipulation: Student A cannot change Student B's consent
         if clean_apaar and clean_apaar != student.apaar_id:
@@ -868,24 +1010,9 @@ def student_dashboard(
     - 'Who looked me up' real-time transparency audit trail from VerificationLog.
     - One-click access to official printable certificate.
     """
-    student = None
-    if user.apaar_id:
-        student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
-    if not student and user.username:
-        if user.username.startswith("student:"):
-            auth_apaar = user.username.split(":", 1)[1]
-            student = session.exec(select(Student).where(Student.apaar_id == auth_apaar)).first()
-        else:
-            student = session.exec(select(Student).where(Student.student_id == user.username)).first()
-    if not student:
-        student = session.exec(select(Student)).first()
+    student = resolve_authenticated_student(user, session)
 
-    institution = None
-    program = None
-    is_signature_valid = False
-    lookups: List[VerificationLog] = []
-
-    if student:
+    try:
         institution = session.get(Institution, student.institution_id)
         program = session.get(Program, student.program_id)
 
@@ -896,15 +1023,28 @@ def student_dashboard(
 
         is_signature_valid = verify_signature(student, student.record_signature, session=session)
 
-        lookups = session.exec(
+        lookups: List[VerificationLog] = session.exec(
             select(VerificationLog)
             .where(VerificationLog.apaar_id == student.apaar_id)
             .order_by(VerificationLog.id.desc())
         ).all()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Database error during student dashboard loading for user id=%s: %s",
+            getattr(user, "id", None),
+            str(exc),
+            exc_info=False,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="A database error occurred while loading dashboard details.",
+        )
 
     base_url = str(request.base_url).rstrip("/")
-    verify_url = f"{base_url}/verify/record/{student.student_id}?sig={student.record_signature}" if student else ""
-    qr_url = f"{base_url}/verify/record/{student.student_id}/qr" if student else ""
+    verify_url = f"{base_url}/verify/record/{student.student_id}?sig={student.record_signature}"
+    qr_url = f"{base_url}/verify/record/{student.student_id}/qr"
 
     return templates.TemplateResponse(
         request=request,
@@ -961,18 +1101,7 @@ def update_student_dashboard_consent(
             detail="Invalid consent tier. Allowed tiers are 0 (Authenticity only), 1 (Directory only), or 2 (Full record).",
         )
 
-    student = None
-    if user.apaar_id:
-        student = session.exec(select(Student).where(Student.apaar_id == user.apaar_id)).first()
-    if not student and user.username:
-        if user.username.startswith("student:"):
-            auth_apaar = user.username.split(":", 1)[1]
-            student = session.exec(select(Student).where(Student.apaar_id == auth_apaar)).first()
-        else:
-            student = session.exec(select(Student).where(Student.student_id == user.username)).first()
-
-    if not student:
-        raise HTTPException(status_code=404, detail="Student record not found")
+    student = resolve_authenticated_student(user, session)
 
     try:
         student.consent_level = tier_int
@@ -987,7 +1116,7 @@ def update_student_dashboard_consent(
             action="UPDATE_CONSENT",
             entity="STUDENT",
             entity_id=str(student.id),
-            details=f"Student {student.apaar_id} updated consent to Tier {tier_int} from dashboard",
+            details=f"Student {mask_identifier(student.apaar_id)} updated consent to Tier {tier_int} from dashboard",
             commit=False,
         )
         session.commit()
