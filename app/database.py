@@ -44,9 +44,21 @@ if not DATABASE_URL or not any(
         "Please provide a valid PostgreSQL connection URL in SUPABASE_DATABASE_URL or DATABASE_URL."
     )
 
-# Normalize legacy postgres:// scheme and ensure psycopg2 driver is used with SQLAlchemy
+# Normalize legacy postgres:// scheme and select available DBAPI driver
+driver = None
+try:
+    import psycopg  # psycopg v3 (default in requirements.txt)
+    driver = "psycopg"
+except ImportError:
+    try:
+        import psycopg2  # psycopg2 fallback
+        driver = "psycopg2"
+    except ImportError:
+        pass
+
 if DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = re.sub(r"^postgres(?:ql)?://", "postgresql+psycopg2://", DATABASE_URL)
+    target_driver = f"+{driver}" if driver else ""
+    DATABASE_URL = re.sub(r"^postgres(?:ql)?://", f"postgresql{target_driver}://", DATABASE_URL)
 
 IS_POSTGRES = True
 IS_SQLITE = False
