@@ -5,13 +5,14 @@ Implements bcrypt password hashing, python-jose JWT, cookie management, and RBAC
 
 from datetime import datetime, timedelta
 import os
+from pathlib import Path
 from typing import Any, List, Optional
+from urllib.parse import quote
 import bcrypt
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from jose import jwt
-from pathlib import Path
 from sqlmodel import Session, select
 
 from app.database import get_session
@@ -80,6 +81,7 @@ def get_current_user(
     """
     Dependency that reads JWT from the access_token HttpOnly cookie,
     validates the token, and returns the User model from the database.
+    Also resolves student sessions authenticated via OTP token.
     """
     token = request.cookies.get("access_token")
     if not token:
@@ -95,27 +97,46 @@ def get_current_user(
 
     statement = select(User).where(User.username == username)
     user = session.exec(statement).first()
+
+    # Handle student session tokens where sub might be 'student:<apaar_id>'
+    if not user and payload.get("role") == "STUDENT" and payload.get("apaar_id"):
+        apaar = payload.get("apaar_id")
+        user = session.exec(select(User).where(User.apaar_id == apaar)).first()
+        if not user:
+            user = User(
+                id=None,
+                username=username,
+                role="STUDENT",
+                apaar_id=apaar,
+                full_name=payload.get("full_name", "Student"),
+                password_hash="",
+            )
     return user
 
 
 def require_role(*roles: str):
     """
     Dependency factory that checks if the logged-in user possesses one of the required roles.
-    Redirects unauthenticated browser requests to /login, returns 401 for API requests.
-    Returns 403 if the role does not match.
+    Redirects unauthenticated browser requests to /login (preserving safe local 'next' path),
+    returns 401 for API requests. Returns 403 if the role does not match.
     """
     def role_checker(
         request: Request,
         user: Optional[User] = Depends(get_current_user),
     ) -> User:
         if not user:
-            # If requesting from browser (HTML request) or non-API route, redirect to /login
             accept = request.headers.get("accept", "")
             is_api = request.url.path.startswith("/api")
             if "text/html" in accept or not is_api:
+                target_path = request.url.path
+                if request.url.query:
+                    target_path += f"?{request.url.query}"
+                login_url = "/login"
+                if target_path.startswith("/") and not target_path.startswith("//") and target_path != "/login":
+                    login_url = f"/login?next={quote(target_path, safe='/?=&-_')}"
                 raise HTTPException(
                     status_code=status.HTTP_303_SEE_OTHER,
-                    headers={"Location": "/login"},
+                    headers={"Location": login_url},
                 )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -147,7 +168,8 @@ async def login(
     AICTE_ADMIN -> /aicte/dashboard
     INSTITUTION -> /institution/dashboard
     VERIFIER    -> /verify
-    STUDENT     -> /student/consent
+    STUDENT     -> /student/dashboard
+    Honors safe 'next' query or form parameter if provided.
     """
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
@@ -155,11 +177,13 @@ async def login(
         username = str(body.get("username", "")).strip()
         password = str(body.get("password", ""))
         is_json = True
+        next_param = None
     else:
         form = await request.form()
         username = str(form.get("username", "")).strip()
         password = str(form.get("password", ""))
         is_json = False
+        next_param = form.get("next") or request.query_params.get("next")
 
     statement = select(User).where(User.username == username)
     user = session.exec(statement).first()
@@ -178,7 +202,7 @@ async def login(
         )
 
     # Create JWT with username and role
-    token = create_access_token(data={"sub": user.username, "role": user.role})
+    token = create_access_token(data={"sub": user.username, "role": user.role, "apaar_id": user.apaar_id})
 
     # Record login in hash-chained audit log
     log_action(
@@ -192,6 +216,8 @@ async def login(
 
     # Role-based redirect
     redirect_url = ROLE_REDIRECTS.get(user.role, "/")
+    if next_param and str(next_param).startswith("/") and not str(next_param).startswith("//"):
+        redirect_url = str(next_param)
 
     if is_json:
         response = JSONResponse(

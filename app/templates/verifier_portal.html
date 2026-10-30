@@ -26,24 +26,37 @@
     <!-- Search Card -->
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-6 sm:p-8">
         <form method="POST" action="/verify" class="space-y-4">
-            <div>
-                <label for="apaar_id" class="block text-sm font-semibold text-gray-900 mb-1">
-                    Student APAAR ID (12 Digits)
-                </label>
-                <div class="flex gap-3">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div class="md:col-span-2">
+                    <label for="apaar_id" class="block text-sm font-semibold text-gray-900 mb-1">
+                        Student APAAR ID (12 Digits)
+                    </label>
                     <input type="text" id="apaar_id" name="apaar_id" maxlength="12" pattern="\d{12}" required
                            value="{{ searched_apaar or '' }}"
                            placeholder="Enter 12-digit numeric APAAR ID, e.g. 100000000001"
-                           class="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                    <button type="submit" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm shadow-sm transition flex items-center gap-2 shrink-0">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                        Verify Record
-                    </button>
+                           class="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-mono focus:ring-2 focus:ring-indigo-500 focus:outline-none">
                 </div>
-                <div class="flex items-center justify-between mt-2 text-xs text-gray-400">
+                <div>
+                    <label for="purpose" class="block text-sm font-semibold text-gray-900 mb-1">
+                        Verification Purpose
+                    </label>
+                    <select id="purpose" name="purpose" required
+                            class="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white">
+                        <option value="EMPLOYMENT_VERIFICATION" {% if (searched_purpose or 'EMPLOYMENT_VERIFICATION') == 'EMPLOYMENT_VERIFICATION' %}selected{% endif %}>Employment Verification</option>
+                        <option value="EDUCATION_ADMISSION" {% if searched_purpose == 'EDUCATION_ADMISSION' %}selected{% endif %}>Education / Admission</option>
+                        <option value="BACKGROUND_CHECK" {% if searched_purpose == 'BACKGROUND_CHECK' %}selected{% endif %}>Background Check (BGV)</option>
+                        <option value="REGULATORY_AUDIT" {% if searched_purpose == 'REGULATORY_AUDIT' %}selected{% endif %}>Regulatory Audit</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex items-center justify-between pt-1">
+                <div class="text-xs text-gray-400">
                     <span>Enforces 30 lookups/min rate limit per verifier.</span>
-                    <span>Demo ID: <code class="bg-gray-100 px-1 py-0.5 rounded text-gray-700">100000000001</code></span>
                 </div>
+                <button type="submit" class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-sm shadow-sm transition flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                    Verify Record
+                </button>
             </div>
         </form>
     </div>
@@ -99,22 +112,22 @@
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                     <div>
                         <div class="text-xs font-semibold text-gray-400 uppercase">Affiliated Institution</div>
-                        <div class="font-bold text-gray-900 mt-0.5">{{ institution.name if institution else 'N/A' }}</div>
-                        <div class="text-xs text-gray-500 font-mono">AIC-ID: {{ institution.aicte_id if institution else '' }}</div>
+                        <div class="font-bold text-gray-900 mt-0.5">{{ (verification.institution_name if verification else (institution.name if institution else 'N/A')) }}</div>
+                        <div class="text-xs text-gray-500 font-mono">AIC-ID: {{ (verification.institution_aicte_id if verification else (institution.aicte_id if institution else '')) }}</div>
                     </div>
                     <div>
                         <div class="text-xs font-semibold text-gray-400 uppercase">Academic Program</div>
-                        <div class="font-bold text-gray-900 mt-0.5">{{ program.name if program else 'N/A' }}</div>
+                        <div class="font-bold text-gray-900 mt-0.5">{{ (verification.program_name if verification else (program.name if program else 'N/A')) }}</div>
                     </div>
                     <div>
                         <div class="text-xs font-semibold text-gray-400 uppercase">Admission Year</div>
-                        <div class="font-semibold text-gray-800 mt-0.5">{{ student.admission_year }}</div>
+                        <div class="font-semibold text-gray-800 mt-0.5">{{ (verification.admission_year if verification else student.admission_year) }}</div>
                     </div>
                     <div>
                         <div class="text-xs font-semibold text-gray-400 uppercase">Enrollment Status</div>
                         <div class="mt-0.5">
                             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-emerald-100 text-emerald-800">
-                                {{ student.status }}
+                                {{ (verification.status if verification else student.status) }}
                             </span>
                         </div>
                     </div>
@@ -125,7 +138,7 @@
             </div>
         </div>
 
-        <!-- TIER 2: FULL RECORD + AUTHENTICITY BADGE + QR -->
+        <!-- TIER 2: FULL RECORD + AUTHENTICITY BADGE -->
         {% elif tier == 2 %}
         <div class="bg-white rounded-2xl border-2 border-emerald-500 shadow-lg overflow-hidden">
             <div class="bg-gradient-to-r from-emerald-600 to-teal-600 px-6 py-5 text-white flex items-center justify-between">
@@ -148,38 +161,38 @@
                     <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-y-4 gap-x-6 text-sm">
                         <div>
                             <div class="text-xs font-semibold text-gray-400 uppercase">Student Full Name</div>
-                            <div class="font-extrabold text-gray-900 text-base mt-0.5">{{ student.full_name }}</div>
+                            <div class="font-extrabold text-gray-900 text-base mt-0.5">{{ (verification.full_name if verification else student.full_name) }}</div>
                         </div>
                         <div>
                             <div class="text-xs font-semibold text-gray-400 uppercase">Institutional Roll ID</div>
-                            <div class="font-mono font-semibold text-gray-800 mt-0.5">{{ student.student_id }}</div>
+                            <div class="font-mono font-semibold text-gray-800 mt-0.5">{{ (verification.student_id if verification else student.student_id) }}</div>
                         </div>
                         <div>
                             <div class="text-xs font-semibold text-gray-400 uppercase">Date of Birth / Gender</div>
-                            <div class="font-medium text-gray-800 mt-0.5">{{ student.dob }} &bull; {{ student.gender }}</div>
+                            <div class="font-medium text-gray-800 mt-0.5">{{ (verification.dob if verification else student.dob) }} &bull; {{ (verification.gender if verification else student.gender) }}</div>
                         </div>
                         <div>
                             <div class="text-xs font-semibold text-gray-400 uppercase">Category / Nationality</div>
-                            <div class="font-medium text-gray-800 mt-0.5">{{ student.category }} &bull; {{ student.nationality }}</div>
+                            <div class="font-medium text-gray-800 mt-0.5">{{ (verification.category if verification else student.category) }} &bull; {{ (verification.nationality if verification else student.nationality) }}</div>
                         </div>
                         <div>
                             <div class="text-xs font-semibold text-gray-400 uppercase">Institution</div>
-                            <div class="font-semibold text-gray-900 mt-0.5">{{ institution.name if institution else 'N/A' }}</div>
-                            <div class="text-xs text-gray-500 font-mono">AIC-ID: {{ institution.aicte_id if institution else '' }}</div>
+                            <div class="font-semibold text-gray-900 mt-0.5">{{ (verification.institution_name if verification else (institution.name if institution else 'N/A')) }}</div>
+                            <div class="text-xs text-gray-500 font-mono">AIC-ID: {{ (verification.institution_aicte_id if verification else (institution.aicte_id if institution else '')) }}</div>
                         </div>
                         <div>
                             <div class="text-xs font-semibold text-gray-400 uppercase">Program</div>
-                            <div class="font-semibold text-gray-900 mt-0.5">{{ program.name if program else 'N/A' }}</div>
+                            <div class="font-semibold text-gray-900 mt-0.5">{{ (verification.program_name if verification else (program.name if program else 'N/A')) }}</div>
                         </div>
                         <div>
                             <div class="text-xs font-semibold text-gray-400 uppercase">Admission Year / Type</div>
-                            <div class="font-medium text-gray-800 mt-0.5">{{ student.admission_year }} &bull; {{ student.admission_type }}</div>
+                            <div class="font-medium text-gray-800 mt-0.5">{{ (verification.admission_year if verification else student.admission_year) }} &bull; {{ (verification.admission_type if verification else student.admission_type) }}</div>
                         </div>
                         <div>
                             <div class="text-xs font-semibold text-gray-400 uppercase">Status</div>
                             <div class="mt-0.5">
                                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                    {{ student.status }}
+                                    {{ (verification.status if verification else student.status) }}
                                 </span>
                             </div>
                         </div>
@@ -187,18 +200,27 @@
 
                     <!-- Authenticity QR Badge -->
                     <div class="w-full md:w-44 shrink-0 flex flex-col items-center p-3 bg-gray-50 border border-gray-200 rounded-xl text-center">
-                        <img src="/verify/record/{{ student.student_id }}/qr" alt="AICTE Verification QR Code" class="w-36 h-36 rounded-lg shadow-sm border border-gray-200">
+                        {% if role != 'VERIFIER' %}
+                        <img src="/verify/record/{{ (verification.student_id if verification else student.student_id) }}/qr" alt="AICTE Verification QR Code" class="w-36 h-36 rounded-lg shadow-sm border border-gray-200">
                         <span class="mt-2 text-xs font-bold text-gray-700">Scan to Verify</span>
-                        <span class="text-[10px] text-gray-400 font-mono">Ed25519 Sealed</span>
+                        {% else %}
+                        <div class="w-36 h-36 bg-emerald-50 border border-emerald-200 rounded-lg flex flex-col items-center justify-center p-2 text-emerald-800 text-center">
+                            <svg class="w-8 h-8 text-emerald-600 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                            <span class="text-xs font-bold">Verified Authentic</span>
+                            <span class="text-[10px] text-emerald-600">AICTE Central Registry</span>
+                        </div>
+                        {% endif %}
+                        <span class="text-[10px] text-gray-400 font-mono mt-1">Ed25519 Sealed</span>
                     </div>
                 </div>
 
-                <!-- Footer Link -->
+                <!-- Footer Audit & Status (No printable certificate link for employers) -->
                 <div class="pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-500">
-                    <span>Ed25519 Sig: <code class="font-mono text-gray-700">{{ student.record_signature[:16] if student.record_signature else 'N/A' }}...</code></span>
-                    <a href="/verify/record/{{ student.student_id }}?sig={{ student.record_signature }}" target="_blank" class="text-indigo-600 hover:text-indigo-800 font-semibold underline">
-                        Open Public Certificate &rarr;
-                    </a>
+                    <span>Ed25519 Sig: <code class="font-mono text-gray-700">{{ (verification.record_signature_snippet if verification and verification.record_signature_snippet else (student.record_signature[:16] ~ '...' if student and student.record_signature else 'N/A')) }}</code></span>
+                    <span class="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+                        <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                        Verified Authentic Credential
+                    </span>
                 </div>
             </div>
         </div>
