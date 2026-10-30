@@ -448,7 +448,7 @@ class TestSecurityEdgeCases(unittest.TestCase):
         # Confirm status values are preserved
         self.assertEqual(data.get("status"), "ok")
         self.assertEqual(db_info.get("status"), "healthy")
-        self.assertEqual(db_info.get("dialect"), "sqlite")
+        self.assertEqual(db_info.get("dialect"), "postgresql")
         self.assertTrue(db_info.get("connected"))
 
         # Test redact_credentials function directly

@@ -74,6 +74,7 @@ class TestSeatValidationRules(unittest.TestCase):
             flags = session.exec(select(ValidationFlag).where(ValidationFlag.program_id == self.prog_id)).all()
             for f in flags:
                 session.delete(f)
+            session.commit()
             prog = session.get(Program, self.prog_id)
             if prog:
                 session.delete(prog)
@@ -83,7 +84,7 @@ class TestSeatValidationRules(unittest.TestCase):
         with Session(engine) as session:
             for i in range(regular_count):
                 session.add(Student(
-                    apaar_id=f"8888{self.prog_id:04d}{i:04d}",
+                    apaar_id=f"88{self.prog_id % 10000:04d}{i:06d}",
                     student_id=f"REG-{self.prog_id}-{i:04d}",
                     full_name=f"Regular Student {i}",
                     dob="2004-01-01",
@@ -97,7 +98,7 @@ class TestSeatValidationRules(unittest.TestCase):
                 ))
             for j in range(super_count):
                 session.add(Student(
-                    apaar_id=f"7777{self.prog_id:04d}{j:04d}",
+                    apaar_id=f"77{self.prog_id % 10000:04d}{j:06d}",
                     student_id=f"SUP-{self.prog_id}-{j:04d}",
                     full_name=f"Supernumerary Student {j}",
                     dob="2004-02-02",
@@ -242,7 +243,7 @@ class TestSeatValidationRules(unittest.TestCase):
         # Add a student with status WITHDRAWN
         with Session(engine) as session:
             withdrawn_stu = Student(
-                apaar_id=f"9999{self.prog_id:04d}0001",
+                apaar_id=f"99{self.prog_id % 10000:04d}000001",
                 student_id=f"WTH-{self.prog_id}-01",
                 full_name="Withdrawn Student",
                 dob="2004-03-03",

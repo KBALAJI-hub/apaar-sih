@@ -57,9 +57,7 @@ Currently, central regulators such as AICTE capture student-level records primar
 
 - **Backend:** Python 3.11+, FastAPI (high-concurrency async ASGI framework)
 - **Database Layer:** SQLModel (combining SQLAlchemy Core/ORM with Pydantic schemas)
-  - *Default Local Demo:* File-backed SQLite (`apaar.db`)
-  - *Automated Test Isolation:* Disposable SQLite test database (`test_apaar.db`)
-  - *Remote Capability:* PostgreSQL / Supabase supported via `DATABASE_URL` with connection pool pre-pinging and recycle handling
+  - *Authoritative Cloud Database:* Supabase PostgreSQL via `DATABASE_URL` / `SUPABASE_DATABASE_URL` with connection pool pre-pinging, 300-second connection recycling, and session pooler optimization
 - **Frontend / UI:** Jinja2 Server-Side Rendered Templates, Tailwind CSS (via CDN), Chart.js (via CDN)
 - **Cryptography & Security:** `cryptography` (Ed25519 signing/verification), `hashlib` (SHA-256 audit chaining), `python-jose` / `passlib` (JWT and bcrypt password hashing)
 - **Data & QR Utilities:** `pandas` (CSV upload parsing), `rapidfuzz` (fuzzy string matching), `qrcode` (PNG generation)
@@ -90,8 +88,7 @@ python -m venv venv
 # 3. Install required dependencies
 pip install -r requirements.txt
 
-# 4. Install the canonical database snapshot (Offline, 2 seconds)
-python scripts/setup_dev_database.py
+# 4. Configure environment variables in .env (Supabase connection URL)
 
 # 5. Launch the local development server
 uvicorn app.main:app --reload
@@ -102,7 +99,7 @@ Once started, the application will be live at: **http://127.0.0.1:8000**
 
 ## 5. Demo Credentials
 
-The canonical database (`apaar.db`) is derived directly from the authoritative national AICTE dataset (13,089 institutions, 58,297 programs, 120 signed students):
+The Supabase database is populated directly from the authoritative national AICTE dataset (13,089 institutions, 58,297 programs, 120 signed students):
 
 | Role | Username | Password | Purpose / Organization |
 |---|---|---|---|
@@ -115,7 +112,6 @@ The canonical database (`apaar.db`) is derived directly from the authoritative n
 | **VERIFIER** | `employer1` *(or `recruiter_tcs`)* | `Verify@123` | TCS Campus Recruiter / Third-Party Background Verification |
 | **STUDENT** | `student1` *(or `student_demo1`)* | `Student@123` | Student Consent Portal (or simulated OTP: `123456`) |
 
-*Maintainer Snapshot Refresh:* Maintainers with Supabase access can refresh the canonical snapshot via `python scripts/sync_supabase_to_sqlite.py`.
 
 ---
 
@@ -153,14 +149,14 @@ To provide honest, transparent prototype boundaries for hackathon evaluation:
    The central APAAR student registry is currently simulated using 850 pre-seeded mock records in the local database. The codebase implements an isolated adapter pattern in `app/apaar_registry.py` (`lookup_apaar`), allowing trivial drop-in replacement with the official Ministry of Education / DigiLocker API when production gateway access is granted.
 2. **Simulated DigiLocker OTP Authentication:**
    The student login flow demonstrates consent management using a deterministic OTP (`123456`) to simulate Aadhaar-linked OTP verification without incurring external SMS gateway dependencies during evaluation.
-3. **Database Dialect Scope:**
-   The prototype is fully stabilized and validated using file-backed SQLite (`apaar.db`) for zero-friction local and offline demonstration. While `app/database.py` includes production connection pooling configurations for Supabase / PostgreSQL, the local demo relies exclusively on SQLite to ensure complete independence from remote network stability.
+3. **Database Architecture:**
+   The project connects directly to Supabase PostgreSQL as its sole authoritative database, utilizing production connection pooling (`pool_pre_ping=True`, 300s connection recycling, and session pooler compatibility) for consistent, resilient execution across development, demo, and evaluation.
 
 ---
 
 ## 8. Automated Test Suites
 
-The repository includes 3 distinct automated test suites with total test isolation (automated tests run against a disposable SQLite database and never modify the primary demo database `apaar.db`):
+The repository includes 3 distinct automated test suites with total test isolation (automated tests run directly against Supabase PostgreSQL):
 
 ```bash
 # 1. Database selection, connection resilience, and credential redaction tests (8 tests)

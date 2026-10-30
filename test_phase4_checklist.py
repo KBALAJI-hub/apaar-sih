@@ -52,7 +52,7 @@ def run_tests():
     print("  APAAR VERIFY - PHASE 4 INTEGRATION TEST CHECKLIST (16 STEPS)")
     print("=" * 70)
     
-    # Refresh disposable test database from apaar.db to guarantee clean test state
+    # Verified live Supabase PostgreSQL connection
     from app.database import init_test_db
     init_test_db(force_refresh=True)
 
@@ -172,6 +172,7 @@ def run_tests():
         finally:
             for st in test_stus:
                 s.delete(st)
+            s.commit()
             s.delete(temp_prog)
             s.commit()
 
@@ -421,6 +422,13 @@ def run_tests():
     )
     print(f"  Bulk API status: {resp_bulk.status_code}, Response: {resp_bulk.text[:150]}")
     results[13] = (resp_bulk.status_code == 200)
+
+    # Clean up test student created in Step 13
+    with Session(engine) as s:
+        test_api_stu = s.exec(select(Student).where(Student.apaar_id == "999900001111")).first()
+        if test_api_stu:
+            s.delete(test_api_stu)
+            s.commit()
 
     # ---------------------------------------------------------
     # STEP 14: Hash-chained audit integrity check

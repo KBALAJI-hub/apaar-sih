@@ -1,12 +1,14 @@
 """
-Targeted Tests for SQLite Database Selection and Persistence for APAAR Verify.
+Targeted Tests for Supabase PostgreSQL Database Selection and Persistence for APAAR Verify.
 Validates:
-1. SQLite dialect and URL configuration
+1. PostgreSQL dialect and Supabase URL configuration
 2. Database connection health and /health endpoint
-3. Presence of all 10 registered tables and non-empty record counts
+3. Presence of all 10 registered tables and non-empty record counts in Supabase
 4. Database session consistency without silent fallback
 5. Supabase safety guard preventing remote database drops
 6. Data persistence across connection pool resets / engine restarts
+7. Intake guard decisions (ALLOW, WARN, BLOCK)
+8. Database diagnostics containing no leaked credentials
 """
 
 import sys
@@ -44,34 +46,34 @@ client = TestClient(app, raise_server_exceptions=False)
 
 
 class TestDatabaseSelectionAndPersistence(unittest.TestCase):
-    def test_01_sqlite_dialect_selection(self):
-        """Confirm SQLite is the selected dialect and flags are correctly set."""
-        self.assertEqual(engine.dialect.name, "sqlite", f"Expected sqlite dialect, got {engine.dialect.name}")
-        self.assertTrue(IS_SQLITE, "IS_SQLITE flag must be True")
-        self.assertFalse(IS_POSTGRES, "IS_POSTGRES flag must be False")
-        self.assertTrue(str(engine.url).startswith("sqlite"), f"Engine URL must start with sqlite: {engine.url}")
-        self.assertIn("apaar.db", str(engine.url), f"Engine URL must point to apaar.db: {engine.url}")
+    def test_01_supabase_postgres_dialect_selection(self):
+        """Confirm PostgreSQL is the selected dialect and flags are correctly set for Supabase."""
+        self.assertEqual(engine.dialect.name, "postgresql", f"Expected postgresql dialect, got {engine.dialect.name}")
+        self.assertTrue(IS_POSTGRES, "IS_POSTGRES flag must be True")
+        self.assertFalse(IS_SQLITE, "IS_SQLITE flag must be False")
+        self.assertTrue(str(engine.url).startswith("postgresql"), f"Engine URL must start with postgresql: {engine.url}")
+        self.assertIn("postgres", str(engine.url).lower(), f"Engine URL must point to Supabase postgres: {engine.url}")
 
     def test_02_database_connection_health(self):
-        """Confirm database connection check returns healthy SQLite diagnostic."""
+        """Confirm database connection check returns healthy PostgreSQL diagnostic."""
         diag = check_db_connection()
         self.assertEqual(diag.get("status"), "healthy")
-        self.assertEqual(diag.get("mode"), "sqlite")
-        self.assertEqual(diag.get("dialect"), "sqlite")
+        self.assertEqual(diag.get("mode"), "supabase_postgresql")
+        self.assertEqual(diag.get("dialect"), "postgresql")
         self.assertTrue(diag.get("connected"))
         self.assertIsNotNone(diag.get("version"))
-        self.assertIn("apaar.db", diag.get("database", ""))
+        self.assertIn("postgres", diag.get("database", "").lower())
 
         # Verify /health endpoint returns 200 and matches
         resp = client.get("/health")
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
         self.assertEqual(data.get("status"), "ok")
-        self.assertEqual(data.get("database", {}).get("dialect"), "sqlite")
+        self.assertEqual(data.get("database", {}).get("dialect"), "postgresql")
         self.assertTrue(data.get("database", {}).get("connected"))
 
     def test_03_all_ten_tables_exist_and_populated(self):
-        """Confirm all 10 expected tables exist in apaar.db and contain seeded data."""
+        """Confirm all 10 expected tables exist in Supabase and contain seeded data."""
         expected_models = [
             (User, "user"),
             (Institution, "institution"),
@@ -117,19 +119,13 @@ class TestDatabaseSelectionAndPersistence(unittest.TestCase):
             pass
 
     def test_05_safety_guard_prevents_supabase_reset(self):
-        """Confirm reset_db() strictly rejects execution if connected to PostgreSQL."""
-        import app.database as db_mod
-        original_flag = db_mod.IS_POSTGRES
-        try:
-            db_mod.IS_POSTGRES = True
-            with self.assertRaises(RuntimeError) as ctx:
-                reset_db()
-            self.assertIn("CRITICAL SAFETY GUARD", str(ctx.exception))
-        finally:
-            db_mod.IS_POSTGRES = original_flag
+        """Confirm reset_db() strictly rejects execution on Supabase PostgreSQL."""
+        with self.assertRaises(RuntimeError) as ctx:
+            reset_db()
+        self.assertIn("CRITICAL SAFETY GUARD", str(ctx.exception))
 
     def test_06_data_persistence_across_connection_restarts(self):
-        """Confirm committed data persists across connection pool disposal (server restart)."""
+        """Confirm committed data persists across connection pool disposal."""
         canary_key = "test_persistence_canary"
         canary_val = "verified_persisted_value_123"
 
@@ -165,14 +161,14 @@ class TestDatabaseSelectionAndPersistence(unittest.TestCase):
         """Explicitly assert ALLOW, WARN, and BLOCK decisions from the intake check engine."""
         from app.validation import intake_check
 
-        # 1. ALLOW assertion: Program 3 (fill ratio well under 90%: 20/30 = 66.7%)
+        # 1. ALLOW assertion: Program 3
         resp_allow = client.get("/api/v1/programs/3/intake-check")
         self.assertEqual(resp_allow.status_code, 200)
         data_allow = resp_allow.json()
         self.assertEqual(data_allow.get("decision"), "ALLOW", f"Expected ALLOW decision for Program 3, got {data_allow}")
         self.assertLess(data_allow.get("fill_ratio"), 0.90)
 
-        # 2. BLOCK assertion: Program 1 (at or exceeding approved intake: 24/24 = 100%)
+        # 2. BLOCK assertion: Program 1
         resp_block = client.get("/api/v1/programs/1/intake-check")
         self.assertEqual(resp_block.status_code, 200)
         data_block = resp_block.json()
@@ -228,6 +224,7 @@ class TestDatabaseSelectionAndPersistence(unittest.TestCase):
             finally:
                 for st in test_students:
                     session.delete(st)
+                session.commit()
                 session.delete(test_prog)
                 session.commit()
 
@@ -251,10 +248,10 @@ class TestDatabaseSelectionAndPersistence(unittest.TestCase):
 
         # Preserves useful diagnostic info
         self.assertEqual(db_info.get("status"), "healthy")
-        self.assertEqual(db_info.get("dialect"), "sqlite")
+        self.assertEqual(db_info.get("dialect"), "postgresql")
         self.assertTrue(db_info.get("connected"))
         self.assertIsNotNone(db_info.get("version"))
-        self.assertIn("apaar.db", db_info.get("database", ""))
+        self.assertIn("postgres", db_info.get("database", "").lower())
 
         # 2. Test redact_credentials function directly on sample connection strings
         sensitive_url = "postgresql://my_db_user:SuperSecretPassword123@aws-pooler.supabase.com:6543/production_apaar_db?sslmode=require"
@@ -264,9 +261,8 @@ class TestDatabaseSelectionAndPersistence(unittest.TestCase):
         self.assertIn("://***:***@", redacted)
 
         # 3. Test safe database name extractor
-        self.assertIn("apaar.db", get_sanitized_database_name())
+        self.assertIn("postgres", get_sanitized_database_name().lower())
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
-
