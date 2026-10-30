@@ -452,7 +452,7 @@ def verifier_portal_get(
 def verifier_portal_post(
     request: Request,
     apaar_id: str = Form(...),
-    purpose: Optional[str] = Form(None),
+    purpose: Optional[str] = Form("EMPLOYMENT_VERIFICATION"),
     session: Session = Depends(get_session),
     user: Optional[User] = Depends(get_current_user),
 ):
@@ -509,7 +509,7 @@ def process_verifier_lookup(
         )
 
     clean_apaar = apaar_id.strip()
-    clean_purpose = str(purpose or "").strip()
+    clean_purpose = str(purpose or "EMPLOYMENT_VERIFICATION").strip()
 
     # 2. Purpose Validation
     if user.role == "VERIFIER" and (not clean_purpose or clean_purpose not in VALID_PURPOSES):

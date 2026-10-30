@@ -275,7 +275,7 @@ def run_tests():
         ).first()
     
     if tier2_student:
-        resp_v_t2 = verifier_client.post("/verify", data={"apaar_id": tier2_student.apaar_id})
+        resp_v_t2 = verifier_client.post("/verify", data={"apaar_id": tier2_student.apaar_id, "purpose": "EMPLOYMENT_VERIFICATION"})
         t2_ok = (
             resp_v_t2.status_code == 200 and
             tier2_student.full_name in resp_v_t2.text and
@@ -295,7 +295,7 @@ def run_tests():
         tier0_student = s.exec(select(Student).where(Student.consent_level == 0)).first()
     
     if tier0_student:
-        resp_v_t0 = verifier_client.post("/verify", data={"apaar_id": tier0_student.apaar_id})
+        resp_v_t0 = verifier_client.post("/verify", data={"apaar_id": tier0_student.apaar_id, "purpose": "EMPLOYMENT_VERIFICATION"})
         t0_ok = (
             resp_v_t0.status_code == 200 and
             ("not consented" in resp_v_t0.text or "Tier 0" in resp_v_t0.text or "Consent" in resp_v_t0.text or "Valid" in resp_v_t0.text) and
@@ -345,7 +345,7 @@ def run_tests():
         sample_student = s.exec(select(Student).where(Student.record_signature != None)).first()
     
     if sample_student:
-        resp_verify_pub = client.get(f"/verify/record/{sample_student.id}?sig={sample_student.record_signature}")
+        resp_verify_pub = verifier_client.get(f"/verify/record/{sample_student.id}?sig={sample_student.record_signature}")
         is_authentic = (
             resp_verify_pub.status_code == 200 and
             ("Authentic" in resp_verify_pub.text or "authentic" in resp_verify_pub.text or "VERIFIED" in resp_verify_pub.text)
@@ -372,7 +372,7 @@ def run_tests():
         sig_valid = verify_signature(test_std, test_std.record_signature)
         print(f"  Signature verification after DB tampering: {sig_valid} (Expected: False)")
         
-        resp_tampered = client.get(f"/verify/record/{test_std.id}?sig={test_std.record_signature}")
+        resp_tampered = verifier_client.get(f"/verify/record/{test_std.id}?sig={test_std.record_signature}")
         shows_tampered = (
             resp_tampered.status_code in (200, 400, 404) and
             ("TAMPERED" in resp_tampered.text or "tampered" in resp_tampered.text or "not authentic" in resp_tampered.text or "Invalid" in resp_tampered.text)
