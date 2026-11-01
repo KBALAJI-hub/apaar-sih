@@ -27,7 +27,7 @@ load_dotenv(_app_dir / ".env")
 load_dotenv()  # Fallback to current working directory
 
 # ---------------------------------------------------------------------------
-# Authoritative Database URL Resolution (Supabase PostgreSQL)
+# Authoritative Database URL Resolution (Supabase PostgreSQL / SQLite test)
 # ---------------------------------------------------------------------------
 DATABASE_URL = (
     os.getenv("SUPABASE_DATABASE_URL")
@@ -35,65 +35,74 @@ DATABASE_URL = (
     or os.getenv("POSTGRES_URL")
 )
 
-if not DATABASE_URL or not any(
-    DATABASE_URL.startswith(p)
-    for p in ("postgresql://", "postgres://", "postgresql+")
+is_sqlite_backend = bool(DATABASE_URL and (DATABASE_URL.startswith("sqlite") or ":memory:" in DATABASE_URL))
+
+if not is_sqlite_backend and (
+    not DATABASE_URL
+    or not any(
+        DATABASE_URL.startswith(p)
+        for p in ("postgresql://", "postgres://", "postgresql+")
+    )
 ):
     raise RuntimeError(
         "Supabase PostgreSQL is the authoritative database for APAAR Verify. "
         "Please provide a valid PostgreSQL connection URL in SUPABASE_DATABASE_URL or DATABASE_URL."
     )
 
-# Normalize legacy postgres:// scheme and select available DBAPI driver
-driver = None
-try:
-    import psycopg  # psycopg v3 (default in requirements.txt)
-    driver = "psycopg"
-except ImportError:
+if is_sqlite_backend:
+    IS_POSTGRES = False
+    IS_SQLITE = True
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        connect_args={"check_same_thread": False, "timeout": 30},
+    )
+else:
+    # Normalize legacy postgres:// scheme and select available DBAPI driver
+    driver = None
     try:
-        import psycopg2  # psycopg2 fallback
-        driver = "psycopg2"
+        import psycopg  # psycopg v3 (default in requirements.txt)
+        driver = "psycopg"
     except ImportError:
-        pass
+        try:
+            import psycopg2  # psycopg2 fallback
+            driver = "psycopg2"
+        except ImportError:
+            pass
 
-if DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://"):
-    target_driver = f"+{driver}" if driver else ""
-    DATABASE_URL = re.sub(r"^postgres(?:ql)?://", f"postgresql{target_driver}://", DATABASE_URL)
+    if DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://"):
+        target_driver = f"+{driver}" if driver else ""
+        DATABASE_URL = re.sub(r"^postgres(?:ql)?://", f"postgresql{target_driver}://", DATABASE_URL)
 
-IS_POSTGRES = True
-IS_SQLITE = False
+    IS_POSTGRES = True
+    IS_SQLITE = False
+
+    pg_connect_args = {}
+    if ":6543" in DATABASE_URL:
+        pg_connect_args["prepare_threshold"] = None
+
+    engine = create_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        pool_size=10,
+        max_overflow=20,
+        connect_args=pg_connect_args,
+    )
+
+fallback_engine = engine
 
 
 def init_test_db(force_refresh: bool = False) -> None:
     """
-    Backwards compatibility stub.
-    Supabase PostgreSQL is the sole authoritative database; no local test DB initialization required.
+    Initializes test database tables if running in SQLite test mode.
+    On Supabase PostgreSQL, remote tables are authoritative.
     """
-    pass
-
-
-# ---------------------------------------------------------------------------
-# Supabase PostgreSQL Engine Configuration
-# ---------------------------------------------------------------------------
-# Supabase / PostgreSQL Session Pooler configuration:
-# - pool_pre_ping=True: validates connections before query execution
-# - pool_recycle=300: prevents stale connections dropped by pooler (5 min timeout)
-# - pool_size & max_overflow: handles concurrent requests smoothly
-# - prepare_threshold=None: disables client-side prepared statements on transaction poolers (:6543)
-pg_connect_args = {}
-if ":6543" in DATABASE_URL:
-    pg_connect_args["prepare_threshold"] = None
-
-engine = create_engine(
-    DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,
-    pool_recycle=300,
-    pool_size=10,
-    max_overflow=20,
-    connect_args=pg_connect_args,
-)
-fallback_engine = engine
+    if IS_SQLITE:
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            init_default_settings(session)
 
 # ---------------------------------------------------------------------------
 # Model Imports for Metadata Registration
@@ -109,6 +118,9 @@ from app.models import (
     AuditLog,
     VerificationLog,
     Setting,
+    SeatAllocation,
+    RegulatoryOverride,
+    HistoricalReconciliation,
 )
 
 # ---------------------------------------------------------------------------
@@ -152,8 +164,16 @@ def create_db_and_tables():
 
 def reset_db():
     """
-    SAFETY GUARD: Resetting the live Supabase PostgreSQL database is strictly prohibited.
+    Resets tables for test environments (strictly permitted only when IS_SQLITE is True).
+    Resetting the live Supabase PostgreSQL database is strictly prohibited.
     """
+    if IS_SQLITE:
+        SQLModel.metadata.drop_all(engine)
+        SQLModel.metadata.create_all(engine)
+        with Session(engine) as session:
+            init_default_settings(session)
+        return
+
     raise RuntimeError(
         "CRITICAL SAFETY GUARD: reset_db() is strictly prohibited on PostgreSQL / Supabase "
         "to prevent accidental deletion or modification of remote datasets."
