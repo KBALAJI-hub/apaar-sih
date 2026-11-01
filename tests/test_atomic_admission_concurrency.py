@@ -10,6 +10,11 @@ Verifies race-condition elimination and database-level consistency across concur
 7. SQLite compatibility: write-serialization and mutex handling against SQLite in-memory/temp database.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import unittest

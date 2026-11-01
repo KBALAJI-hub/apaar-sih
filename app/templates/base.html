@@ -18,7 +18,7 @@
     <div class="app-shell {% if role %}app-shell--authenticated{% else %}app-shell--public{% endif %}">
         {% if role %}
         <aside class="app-sidebar">
-            <a href="/" class="brand-lockup" aria-label="ApaarAnvaya home">
+            <a href="{% if role == 'AICTE_ADMIN' %}/aicte/dashboard{% elif role == 'INSTITUTION' %}/institution/dashboard{% elif role == 'VERIFIER' %}/verify{% elif role == 'STUDENT' %}/student/dashboard{% else %}/{% endif %}" class="brand-lockup" aria-label="ApaarAnvaya home">
                 <span class="brand-emblem" aria-hidden="true">
                     <svg viewBox="0 0 40 40" fill="none">
                         <path d="M20 3.5 34 9v9.2c0 8.2-5.7 14.1-14 18.3C11.7 32.3 6 26.4 6 18.2V9l14-5.5Z" stroke="currentColor" stroke-width="1.5"/>
@@ -76,6 +76,9 @@
                     <a href="/" class="header-link">Home</a>
                     <a href="/verify" class="header-link">Verify a record</a>
                     <a href="/login" class="header-login">Sign in <span aria-hidden="true">→</span></a>
+                    {% else %}
+                    <a href="{% if role == 'AICTE_ADMIN' %}/aicte/dashboard{% elif role == 'INSTITUTION' %}/institution/dashboard{% elif role == 'VERIFIER' %}/verify{% elif role == 'STUDENT' %}/student/dashboard{% else %}/{% endif %}" class="header-link">My Dashboard</a>
+                    <a href="/logout" class="header-login">Sign out <span aria-hidden="true">→</span></a>
                     {% endif %}
                 </div>
             </header>

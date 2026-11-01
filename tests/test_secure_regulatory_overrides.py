@@ -14,6 +14,11 @@ and enforces all 10 regulatory override security requirements:
 10. Audit-log creation: Overrides and exceptional admissions create tamper-evident hash-chained AuditLog entries.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 from datetime import datetime, timedelta
 import unittest
 from fastapi import HTTPException

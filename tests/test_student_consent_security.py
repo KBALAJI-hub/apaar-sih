@@ -14,6 +14,11 @@ Validates:
 11. Valid self-update via student dashboard consent endpoint
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import patch

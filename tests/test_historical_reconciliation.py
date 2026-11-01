@@ -16,6 +16,11 @@ Verifies:
 11. Audit logging: tamper-evident audit logs generated with hash chaining.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 import io
 import json
 import unittest

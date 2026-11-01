@@ -12,6 +12,11 @@ Verifies:
 7. CSV and JSON uploads with different academic years validate against respective programs independently.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 import io
 import unittest
 from fastapi.testclient import TestClient

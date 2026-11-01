@@ -14,6 +14,11 @@ Verifies:
 9. Mixed valid and invalid bulk uploads handle each row correctly (rejected rows do not consume capacity).
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 import io
 import unittest
 from fastapi.testclient import TestClient

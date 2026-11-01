@@ -19,6 +19,11 @@ Automates the 16-step test checklist from Section 12 of the implementation plan:
 16. Verifier exceeds rate limit -> 429 with message
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 import os
 import sys
 import tempfile

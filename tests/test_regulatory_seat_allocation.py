@@ -13,6 +13,11 @@ Verifies:
 8. Allocation exceeding sanctioned intake or conflicting approvals rejected by validation.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 import io
 import unittest
 from datetime import datetime, timezone, timedelta
