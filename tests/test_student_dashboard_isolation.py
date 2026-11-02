@@ -10,6 +10,11 @@ Complies with P0 Security Requirements (SIH PS 26263):
 7. Confirming that a failed mapping NEVER exposes another student's data.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 import logging
 import unittest
 from unittest.mock import patch

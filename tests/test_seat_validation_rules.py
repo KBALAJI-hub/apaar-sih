@@ -13,6 +13,11 @@ Comprehensive Test Suite for APAAR Verify Seat Validation Rules & Integrity (SIH
 7. API Program Intake Check & Student Update by APAAR ID
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 import io
 import unittest
 from fastapi.testclient import TestClient
@@ -20,7 +25,7 @@ from sqlmodel import Session, select
 
 from app.main import app
 from app.database import engine, get_session
-from app.models import User, Institution, Program, Student, ValidationFlag, AuditLog, ApaarRegistry
+from app.models import User, Institution, Program, Student, ValidationFlag, AuditLog, ApaarRegistry, RegulatoryOverride, SeatAllocation
 from app.auth import create_access_token
 from app.validation import (
     intake_check,
@@ -28,7 +33,6 @@ from app.validation import (
     validate_program_intake,
     validate_override_request,
     HARD_REJECT_RULE_CODES,
-    MAX_OVERRIDE_BUFFER_RATIO,
 )
 from app.audit import verify_chain
 
@@ -74,6 +78,12 @@ class TestSeatValidationRules(unittest.TestCase):
             flags = session.exec(select(ValidationFlag).where(ValidationFlag.program_id == self.prog_id)).all()
             for f in flags:
                 session.delete(f)
+            overrides = session.exec(select(RegulatoryOverride).where(RegulatoryOverride.program_id == self.prog_id)).all()
+            for o in overrides:
+                session.delete(o)
+            allocs = session.exec(select(SeatAllocation).where(SeatAllocation.program_id == self.prog_id)).all()
+            for a in allocs:
+                session.delete(a)
             session.commit()
             prog = session.get(Program, self.prog_id)
             if prog:
@@ -277,10 +287,14 @@ class TestSeatValidationRules(unittest.TestCase):
             cookies={"access_token": self.inst_token},
         )
         self.assertEqual(resp.status_code, 400)
-        self.assertTrue("is FULL (BLOCK)" in resp.text or "override strictly requires" in resp.text)
+        self.assertTrue(
+            "is full" in resp.text.lower()
+            or "capacity exceeded" in resp.text.lower()
+            or "regulatory authorization record" in resp.text.lower()
+        )
 
-        # Now reactivate with valid regulatory override justification (> 20 chars)
-        resp_override = client.post(
+        # Attempt to reactivate with only text justification -> REJECTED (Phase 4 requirement: text alone insufficient)
+        resp_text_only = client.post(
             f"/institution/students/{stu_id}/edit",
             data={
                 "full_name": "Withdrawn Student",
@@ -293,6 +307,46 @@ class TestSeatValidationRules(unittest.TestCase):
                 "status_field": "ACTIVE",
                 "consent_level": 1,
                 "override_justification": "AICTE_APPROVAL_LETTER: High Court Order HC/2024/7889 for re-admission",
+            },
+            cookies={"access_token": self.inst_token},
+            follow_redirects=False,
+        )
+        self.assertEqual(resp_text_only.status_code, 400)
+        self.assertIn("Missing regulatory authorization record", resp_text_only.text)
+
+        # Now create a verified RegulatoryOverride and reactivate using override_id -> ACCEPTED
+        with Session(engine) as session:
+            admin_user = session.exec(select(User).where(User.role == "AICTE_ADMIN")).first()
+            from app.override import create_regulatory_override
+            ov = create_regulatory_override(
+                session=session,
+                user=admin_user,
+                program_id=self.prog_id,
+                academic_year="2024",
+                authorization_category="COURT_DIRECTIVE",
+                approval_ref="HC/2024/7889",
+                issuing_authority="High Court of Delhi",
+                document_ref="DOC-HC-7889-VERIFIED",
+                seat_buffer=1,
+                justification="High Court Order HC/2024/7889 directing compliance re-admission",
+                verification_status="VERIFIED",
+            )
+            ov_id = ov.id
+
+        resp_override = client.post(
+            f"/institution/students/{stu_id}/edit",
+            data={
+                "full_name": "Withdrawn Student",
+                "dob": "2004-03-03",
+                "gender": "M",
+                "category": "GENERAL",
+                "program_id": self.prog_id,
+                "admission_year": 2024,
+                "admission_type": "REGULAR",
+                "status_field": "ACTIVE",
+                "consent_level": 1,
+                "override_id": ov_id,
+                "override_justification": "High Court Order HC/2024/7889 directing compliance re-admission",
             },
             cookies={"access_token": self.inst_token},
             follow_redirects=False,
@@ -327,36 +381,67 @@ class TestSeatValidationRules(unittest.TestCase):
             cookies={"access_token": self.inst_token},
         )
         self.assertEqual(resp.status_code, 400)
-        self.assertTrue("Regular intake is FULL (BLOCK)" in resp.text or "override strictly requires" in resp.text)
+        self.assertTrue(
+            "is full" in resp.text.lower()
+            or "capacity exceeded" in resp.text.lower()
+            or "regulatory authorization record" in resp.text.lower()
+        )
 
     def test_08_override_rules_and_statutory_hard_ceiling(self):
-        """Test override validation: reject trivial/short justification, enforce 105% statutory hard ceiling."""
+        """Test override validation: reject trivial/short justification, require verified authorization, enforce seat buffer."""
         self._seed_students(100, 0)
         with Session(engine) as session:
             intake = intake_check(self.prog_id, session, target_admission_type="REGULAR")
             prog = session.get(Program, self.prog_id)
+            admin_user = session.exec(select(User).where(User.role == "AICTE_ADMIN")).first()
 
             # Trivial justification (< 20 chars) -> REJECTED
-            valid_trivial, err_trivial = validate_override_request(prog, "REGULAR", "ok override", intake)
+            valid_trivial, err_trivial, _ = validate_override_request(prog, "REGULAR", "ok override", intake)
             self.assertFalse(valid_trivial)
             self.assertIn("at least 20 characters", err_trivial)
 
-            # Valid regulatory justification within buffer -> ACCEPTED
-            valid_formal, err_formal = validate_override_request(
+            # Formal justification without authorization record -> REJECTED (Phase 4 requirement)
+            valid_no_rec, err_no_rec, _ = validate_override_request(
                 prog, "REGULAR", "AICTE Approval Letter F.No. AICTE/AB/2024/991 quota enhancement", intake
+            )
+            self.assertFalse(valid_no_rec)
+            self.assertIn("Missing regulatory authorization record", err_no_rec)
+
+            # With verified approval record -> ACCEPTED
+            from app.override import create_regulatory_override
+            ov = create_regulatory_override(
+                session=session,
+                user=admin_user,
+                program_id=self.prog_id,
+                academic_year="2024",
+                authorization_category="AICTE_APPROVAL_LETTER",
+                approval_ref="AICTE/AB/2024/991",
+                issuing_authority="AICTE Executive Committee",
+                document_ref="DOC-AICTE-991",
+                seat_buffer=1,
+                justification="AICTE Approval Letter F.No. AICTE/AB/2024/991 quota enhancement for 1 seat",
+                verification_status="VERIFIED",
+            )
+            valid_formal, err_formal, rec = validate_override_request(
+                prog, "REGULAR", "AICTE Approval Letter F.No. AICTE/AB/2024/991 quota enhancement for 1 seat",
+                intake, session=session, override_id=ov.id, admission_year=2024
             )
             self.assertTrue(valid_formal)
             self.assertIsNone(err_formal)
+            self.assertEqual(rec.id, ov.id)
 
-        # Now fill program past statutory hard ceiling (105% of 120 = 126)
-        self._seed_students(6, 21)  # Total = 100 + 6 + 21 = 127 > 126
-        with Session(engine) as session:
-            intake_heavy = intake_check(self.prog_id, session)
-            valid_ceiling, err_ceiling = validate_override_request(
-                prog, "REGULAR", "AICTE Approval Letter F.No. AICTE/AB/2024/991 quota enhancement", intake_heavy
+            # Exhaust seat buffer: utilize 1 seat -> now 1/1 utilized
+            ov.seats_utilized = 1
+            session.add(ov)
+            session.commit()
+
+            # Further admission beyond authorized seat buffer -> REJECTED
+            valid_exhausted, err_exhausted, _ = validate_override_request(
+                prog, "REGULAR", "AICTE Approval Letter F.No. AICTE/AB/2024/991 quota enhancement for 1 seat",
+                intake, session=session, override_id=ov.id, admission_year=2024
             )
-            self.assertFalse(valid_ceiling)
-            self.assertIn("Statutory Hard Ceiling Reached", err_ceiling)
+            self.assertFalse(valid_exhausted)
+            self.assertIn("capacity exhausted", err_exhausted)
 
     def test_09_csv_upload_quota_rejection_not_silently_accepted(self):
         """Test that CSV upload rejects new admissions exceeding quota and writes explicit reasons to Error CSV."""

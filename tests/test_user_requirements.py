@@ -16,6 +16,11 @@ Tests:
 7. Settings, Audit Log, and Cryptographic Hash-Chain Integrity.
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select, func
 from app.main import app

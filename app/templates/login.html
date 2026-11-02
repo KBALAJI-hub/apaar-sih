@@ -67,7 +67,13 @@
 function quickFill(user, pass) {
   document.getElementById('username').value = user;
   document.getElementById('password').value = pass;
-  document.getElementById('login-form').requestSubmit();
+  const nextInput = document.querySelector('input[name="next"]');
+  if (nextInput) {
+    nextInput.value = '';
+  }
+  const form = document.getElementById('login-form');
+  form.action = '/login';
+  form.requestSubmit();
 }
 </script>
 {% endblock %}

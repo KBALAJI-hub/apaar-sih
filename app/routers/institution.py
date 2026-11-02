@@ -18,8 +18,9 @@ from sqlmodel import Session, func, or_, select
 
 from app.audit import log_action
 from app.auth import get_current_user, require_role
+from app.concurrency import atomic_admission_scope
 from app.database import get_session
-from app.models import Institution, Program, Student, User, ValidationFlag, utc_now
+from app.models import Institution, Program, Student, User, ValidationFlag, RegulatoryOverride, utc_now
 from app.security import sign_record
 from app.validation import (
     batch_intake_check,
@@ -28,6 +29,10 @@ from app.validation import (
     validate_program_intake,
     validate_student_row,
     validate_override_request,
+    validate_admission_capacity,
+    BatchCapacityTracker,
+    resolve_program,
+    parse_academic_year,
     HARD_REJECT_RULE_CODES,
 )
 
@@ -38,6 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # In-memory store for generated rejection error CSVs (keyed by institution_id)
+ERROR_CSVS: Dict[int, str] = {}
 
 # Master AICTE validation rule metadata for inspection diagnostics
 RULE_METADATA: Dict[str, Dict[str, str]] = {
@@ -634,12 +640,13 @@ def create_student(
     gender: str = Form(...),
     category: str = Form("GENERAL"),
     program_id: int = Form(...),
-    admission_year: int = Form(2024),
+    admission_year: Optional[int] = Form(None),
     admission_type: str = Form("REGULAR"),
     is_nri: bool = Form(False),
     is_foreign_national: bool = Form(False),
     nationality: str = Form("Indian"),
     consent_level: int = Form(1),
+    override_id: Optional[int] = Form(None),
     override_justification: Optional[str] = Form(None),
     session: Session = Depends(get_session),
     user: User = Depends(require_role("INSTITUTION")),
@@ -662,125 +669,173 @@ def create_student(
             status_code=400,
         )
 
-    # Intake Guard check with proposed admission type
-    intake = intake_check(program_id, session, target_admission_type=admission_type)
-    if intake["decision"] == "BLOCK":
-        is_valid_override, override_err = validate_override_request(
-            program=program,
-            admission_type=admission_type,
-            justification=override_justification,
-            current_intake_data=intake,
+    if admission_year is None:
+        return templates.TemplateResponse(
+            request=request,
+            name="student_form.html",
+            context={"student": None, "programs": programs, "error": "Admission year is required.", "role": user.role},
+            status_code=400,
         )
-        if not is_valid_override:
-            quota_label = "Regular intake" if admission_type == "REGULAR" else "Supernumerary quota"
-            err_detail = override_err or f"{quota_label} is FULL (BLOCK). A formal over-admission justification (min 20 characters) is required to proceed."
+
+    # Atomic Admission Capacity Enforcement (Phase 5)
+    with atomic_admission_scope(session, program_ids=[program_id], override_ids=override_id):
+        cap_result = validate_admission_capacity(
+            session=session,
+            program_id=program_id,
+            admission_type=admission_type,
+            target_status="ACTIVE",
+            admission_year=admission_year,
+            category=category,
+            is_nri=is_nri,
+            is_foreign_national=is_foreign_national,
+            existing_student=None,
+            override_id=override_id,
+            override_justification=override_justification,
+            allow_override=True,
+            caller_user=user,
+        )
+        if not cap_result.allowed:
+            session.rollback()
             return templates.TemplateResponse(
                 request=request,
                 name="student_form.html",
                 context={
                     "student": None,
                     "programs": programs,
-                    "error": err_detail,
+                    "error": cap_result.reason,
                     "role": user.role,
                 },
                 status_code=400,
             )
 
-    # Build validation context and run rules
-    ctx = build_validation_context(inst_id, session)
-    row_data = {
-        "apaar_id": apaar_id.strip(),
-        "student_id": student_id.strip(),
-        "full_name": full_name.strip(),
-        "dob": dob.strip(),
-        "gender": gender,
-        "category": category,
-        "program_name": program.name,
-        "program_id": program.id,
-        "admission_year": admission_year,
-        "admission_type": admission_type,
-        "is_nri": is_nri,
-        "is_foreign_national": is_foreign_national,
-        "nationality": nationality.strip(),
-        "mode": "FULL_TIME",
-        "consent_given": consent_level > 0,
-    }
+        # Build validation context and run rules
+        ctx = build_validation_context(inst_id, session)
+        row_data = {
+            "apaar_id": apaar_id.strip(),
+            "student_id": student_id.strip(),
+            "full_name": full_name.strip(),
+            "dob": dob.strip(),
+            "gender": gender,
+            "category": category,
+            "program_name": program.name,
+            "program_id": program.id,
+            "admission_year": admission_year,
+            "admission_type": admission_type,
+            "is_nri": is_nri,
+            "is_foreign_national": is_foreign_national,
+            "nationality": nationality.strip(),
+            "mode": "FULL_TIME",
+            "consent_given": consent_level > 0,
+        }
 
-    flags = validate_student_row(row_data, ctx)
-    is_rejected = any(f["rule_code"] in HARD_REJECT_RULE_CODES for f in flags)
+        flags = validate_student_row(row_data, ctx)
+        is_rejected = any(f["rule_code"] in HARD_REJECT_RULE_CODES for f in flags)
 
-    if is_rejected:
-        reject_reasons = "; ".join(f["message"] for f in flags if f["rule_code"] in HARD_REJECT_RULE_CODES)
-        return templates.TemplateResponse(
-            request=request,
-            name="student_form.html",
-            context={"student": None, "programs": programs, "error": f"Rejected by AICTE Rule: {reject_reasons}", "role": user.role},
-            status_code=400,
-        )
+        if is_rejected:
+            session.rollback()
+            reject_reasons = "; ".join(f["message"] for f in flags if f["rule_code"] in HARD_REJECT_RULE_CODES)
+            return templates.TemplateResponse(
+                request=request,
+                name="student_form.html",
+                context={"student": None, "programs": programs, "error": f"Rejected by AICTE Rule: {reject_reasons}", "role": user.role},
+                status_code=400,
+            )
 
-    # Save Student record
-    new_student = Student(
-        apaar_id=apaar_id.strip(),
-        institution_id=inst_id,
-        program_id=program.id,
-        student_id=student_id.strip(),
-        full_name=full_name.strip(),
-        dob=dob.strip(),
-        gender=gender,
-        category=category,
-        admission_type=admission_type,
-        is_nri=is_nri,
-        oci_status=False,
-        is_foreign_national=is_foreign_national,
-        nationality=nationality.strip(),
-        admission_year=admission_year,
-        mode="FULL_TIME",
-        status="ACTIVE",
-        consent_level=consent_level,
-        consent_timestamp=utc_now() if consent_level > 0 else None,
-        created_at=utc_now(),
-    )
-    session.add(new_student)
-    session.commit()
-    session.refresh(new_student)
-
-    # Sign record with Ed25519 root private key
-    new_student.record_signature = sign_record(new_student, session)
-    session.add(new_student)
-    session.commit()
-
-    # Save non-reject validation flags (e.g. R3, R4, R5, R8, R10, R12)
-    for f in flags:
-        flag_record = ValidationFlag(
+        # Save Student record
+        new_student = Student(
+            apaar_id=apaar_id.strip(),
             institution_id=inst_id,
             program_id=program.id,
-            student_id=new_student.id,
-            rule_code=f["rule_code"],
-            severity=f["severity"],
-            message=f["message"],
-            recommended_action=f["recommended_action"],
-            status="OPEN",
+            student_id=student_id.strip(),
+            full_name=full_name.strip(),
+            dob=dob.strip(),
+            gender=gender,
+            category=category,
+            admission_type=admission_type,
+            is_nri=is_nri,
+            oci_status=False,
+            is_foreign_national=is_foreign_national,
+            nationality=nationality.strip(),
+            admission_year=admission_year,
+            mode="FULL_TIME",
+            status="ACTIVE",
+            allocation_id=cap_result.allocation_id,
+            override_id=cap_result.override_id,
+            consent_level=consent_level,
+            consent_timestamp=utc_now() if consent_level > 0 else None,
             created_at=utc_now(),
         )
-        session.add(flag_record)
-    session.commit()
+        session.add(new_student)
+        session.flush()
 
-    # Re-evaluate program intake
+        # Consume override seat if admission occurred via regulatory override
+        if cap_result.is_override and cap_result.override_id:
+            override_rec = session.get(RegulatoryOverride, cap_result.override_id)
+            if override_rec:
+                override_rec.seats_utilized += 1
+                override_rec.updated_at = utc_now()
+                session.add(override_rec)
+                log_action(
+                    session=session,
+                    user=user,
+                    action="ADMISSION_OVERRIDE",
+                    entity="STUDENT",
+                    entity_id=str(new_student.id),
+                    details={
+                        "override_id": override_rec.id,
+                        "approval_ref": override_rec.approval_ref,
+                        "issuing_authority": override_rec.issuing_authority,
+                        "approver_id": override_rec.approved_by_user_id,
+                        "student_name": new_student.full_name,
+                        "apaar_id": new_student.apaar_id,
+                        "student_id": new_student.student_id,
+                        "program_id": new_student.program_id,
+                        "admission_year": new_student.admission_year,
+                        "seats_utilized": override_rec.seats_utilized,
+                        "seat_buffer": override_rec.seat_buffer,
+                    },
+                    commit=False,
+                )
+
+        # Sign record with Ed25519 root private key
+        new_student.record_signature = sign_record(new_student, session)
+        session.add(new_student)
+
+        # Save non-reject validation flags (e.g. R3, R4, R5, R8, R10, R12)
+        for f in flags:
+            flag_record = ValidationFlag(
+                institution_id=inst_id,
+                program_id=program.id,
+                student_id=new_student.id,
+                rule_code=f["rule_code"],
+                severity=f["severity"],
+                message=f["message"],
+                recommended_action=f["recommended_action"],
+                status="OPEN",
+                created_at=utc_now(),
+            )
+            session.add(flag_record)
+
+        # Hash-chained audit logging
+        audit_details = f"Created student {new_student.full_name} (Roll: {new_student.student_id}, APAAR: {new_student.apaar_id})"
+        if override_justification and override_justification.strip():
+            audit_details += f" | Intake BLOCK Override Justification: {override_justification.strip()}"
+
+        log_action(
+            session=session,
+            user=user,
+            action="STUDENT_CREATE",
+            entity="STUDENT",
+            entity_id=str(new_student.id),
+            details=audit_details,
+            commit=False,
+        )
+
+        # Commit everything atomically in one transaction
+        session.commit()
+
+    # Re-evaluate program intake after successful atomic commit
     validate_program_intake(program.id, session)
-
-    # Hash-chained audit logging
-    audit_details = f"Created student {new_student.full_name} (Roll: {new_student.student_id}, APAAR: {new_student.apaar_id})"
-    if override_justification and override_justification.strip():
-        audit_details += f" | Intake BLOCK Override Justification: {override_justification.strip()}"
-
-    log_action(
-        session=session,
-        user=user,
-        action="STUDENT_CREATE",
-        entity="STUDENT",
-        entity_id=str(new_student.id),
-        details=audit_details,
-    )
 
     return RedirectResponse(url="/institution/students", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -817,13 +872,14 @@ def update_student(
     gender: str = Form(...),
     category: str = Form("GENERAL"),
     program_id: int = Form(...),
-    admission_year: int = Form(2024),
+    admission_year: Optional[int] = Form(None),
     admission_type: str = Form("REGULAR"),
     is_nri: bool = Form(False),
     is_foreign_national: bool = Form(False),
     nationality: str = Form("Indian"),
     consent_level: int = Form(1),
     status_field: str = Form("ACTIVE"),
+    override_id: Optional[int] = Form(None),
     override_justification: Optional[str] = Form(None),
     session: Session = Depends(get_session),
     user: User = Depends(require_role("INSTITUTION")),
@@ -835,83 +891,130 @@ def update_student(
     if not student or student.institution_id != user.institution_id:
         raise HTTPException(status_code=404, detail="Student not found or access denied")
 
-    # Evaluate seat quota if program changed, admission type changed, or student reactivated
-    seat_claim_changed = (
-        student.program_id != program_id
-        or student.admission_type != admission_type
-        or (student.status != "ACTIVE" and status_field == "ACTIVE")
-    )
-    if seat_claim_changed:
-        target_program = session.get(Program, program_id)
-        if not target_program or target_program.institution_id != user.institution_id:
-            raise HTTPException(status_code=400, detail="Target program is invalid for this institution.")
+    target_program = session.get(Program, program_id)
+    if not target_program or target_program.institution_id != user.institution_id:
+        raise HTTPException(status_code=400, detail="Target program is invalid for this institution.")
 
-        intake = intake_check(program_id, session, target_admission_type=admission_type)
-        if intake["decision"] == "BLOCK":
-            is_valid_override, override_err = validate_override_request(
-                program=target_program,
-                admission_type=admission_type,
-                justification=override_justification,
-                current_intake_data=intake,
+    target_admission_year = admission_year if admission_year is not None else student.admission_year
+    if target_admission_year is None:
+        programs = session.exec(select(Program).where(Program.institution_id == user.institution_id)).all()
+        return templates.TemplateResponse(
+            request=request,
+            name="student_form.html",
+            context={
+                "student": student,
+                "programs": programs,
+                "error": "Admission year is required.",
+                "role": user.role,
+            },
+            status_code=400,
+        )
+
+    # Admission Capacity Enforcement (Constraint 1, 2, 3) with Atomic Lock
+    programs_to_lock = sorted(list(set(filter(None, [student.program_id, program_id]))))
+    with atomic_admission_scope(session, program_ids=programs_to_lock, override_ids=override_id):
+        cap_result = validate_admission_capacity(
+            session=session,
+            program_id=program_id,
+            admission_type=admission_type,
+            target_status=status_field,
+            admission_year=target_admission_year,
+            category=category,
+            is_nri=is_nri,
+            is_foreign_national=is_foreign_national,
+            existing_student=student,
+            override_id=override_id,
+            override_justification=override_justification,
+            allow_override=True,
+            caller_user=user,
+        )
+        if not cap_result.allowed:
+            session.rollback()
+            programs = session.exec(select(Program).where(Program.institution_id == user.institution_id)).all()
+            return templates.TemplateResponse(
+                request=request,
+                name="student_form.html",
+                context={
+                    "student": student,
+                    "programs": programs,
+                    "error": cap_result.reason,
+                    "role": user.role,
+                },
+                status_code=400,
             )
-            if not is_valid_override:
-                programs = session.exec(select(Program).where(Program.institution_id == user.institution_id)).all()
-                quota_label = "Regular intake" if admission_type == "REGULAR" else "Supernumerary quota"
-                err_detail = override_err or f"Target program {quota_label} is FULL (BLOCK). A formal over-admission justification (min 20 characters) is required to proceed."
-                return templates.TemplateResponse(
-                    request=request,
-                    name="student_form.html",
-                    context={
-                        "student": student,
-                        "programs": programs,
-                        "error": err_detail,
-                        "role": user.role,
+
+        old_program_id = student.program_id
+        old_admission_type = student.admission_type
+        old_status = student.status
+        old_admission_year = student.admission_year
+
+        student.full_name = full_name.strip()
+        student.dob = dob.strip()
+        student.gender = gender
+        student.category = category
+        student.program_id = program_id
+        student.admission_year = target_admission_year
+        student.admission_type = admission_type
+        student.is_nri = is_nri
+        student.is_foreign_national = is_foreign_national
+        student.nationality = nationality.strip()
+        student.consent_level = consent_level
+        student.status = status_field
+        if cap_result.allocation_id is not None:
+            student.allocation_id = cap_result.allocation_id
+        if cap_result.is_override and cap_result.override_id:
+            student.override_id = cap_result.override_id
+        student.updated_at = utc_now()
+        # Re-sign record on update
+        student.record_signature = sign_record(student, session)
+
+        session.add(student)
+
+        # Consume override seat if updated under regulatory override
+        if cap_result.is_override and cap_result.override_id:
+            override_rec = session.get(RegulatoryOverride, cap_result.override_id)
+            if override_rec:
+                override_rec.seats_utilized += 1
+                override_rec.updated_at = utc_now()
+                session.add(override_rec)
+                log_action(
+                    session=session,
+                    user=user,
+                    action="ADMISSION_OVERRIDE",
+                    entity="STUDENT",
+                    entity_id=str(student.id),
+                    details={
+                        "override_id": override_rec.id,
+                        "approval_ref": override_rec.approval_ref,
+                        "issuing_authority": override_rec.issuing_authority,
+                        "approver_id": override_rec.approved_by_user_id,
+                        "student_name": student.full_name,
+                        "apaar_id": student.apaar_id,
+                        "student_id": student.student_id,
+                        "program_id": student.program_id,
+                        "admission_year": student.admission_year,
+                        "seats_utilized": override_rec.seats_utilized,
+                        "seat_buffer": override_rec.seat_buffer,
                     },
-                    status_code=400,
+                    commit=False,
                 )
 
-    old_program_id = student.program_id
-    old_admission_type = student.admission_type
-    old_status = student.status
+        # Audit logging
+        audit_details = f"Updated details for student {student.full_name} (Roll: {student.student_id})"
+        if override_justification and override_justification.strip():
+            audit_details += f" | Intake BLOCK Override Justification: {override_justification.strip()}"
 
-    student.full_name = full_name.strip()
-    student.dob = dob.strip()
-    student.gender = gender
-    student.category = category
-    student.program_id = program_id
-    student.admission_year = admission_year
-    student.admission_type = admission_type
-    student.is_nri = is_nri
-    student.is_foreign_national = is_foreign_national
-    student.nationality = nationality.strip()
-    student.consent_level = consent_level
-    student.status = status_field
-    student.updated_at = utc_now()
-    # Re-sign record on update
-    student.record_signature = sign_record(student, session)
+        log_action(
+            session=session,
+            user=user,
+            action="STUDENT_EDIT",
+            entity="STUDENT",
+            entity_id=str(student.id),
+            details=audit_details,
+            commit=False,
+        )
 
-    session.add(student)
-    session.commit()
-
-    # Re-evaluate intake if program, admission type, or status changed
-    if old_program_id != program_id or old_admission_type != admission_type or old_status != status_field:
-        if old_program_id:
-            validate_program_intake(old_program_id, session)
-        validate_program_intake(program_id, session)
-
-    # Audit logging
-    audit_details = f"Updated details for student {student.full_name} (Roll: {student.student_id})"
-    if override_justification and override_justification.strip():
-        audit_details += f" | Intake BLOCK Override Justification: {override_justification.strip()}"
-
-    log_action(
-        session=session,
-        user=user,
-        action="STUDENT_EDIT",
-        entity="STUDENT",
-        entity_id=str(student.id),
-        details=audit_details,
-    )
+        session.commit()
 
     return RedirectResponse(url="/institution/students", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -995,125 +1098,141 @@ async def process_csv_upload(
     # Preload validation context once
     ctx = build_validation_context(inst_id, session)
 
-    # Pre-fetch intake quotas for institution programs to reject new admissions over capacity
-    inst_programs = session.exec(select(Program).where(Program.institution_id == inst_id)).all()
-    batch_intake_map: Dict[int, Dict[str, Any]] = {p.id: intake_check(p.id, session, program=p) for p in inst_programs}
-    batch_allocated: Dict[int, Dict[str, int]] = defaultdict(lambda: {"REGULAR": 0, "SUPERNUMERARY": 0})
+    # Collect candidate program IDs to acquire atomic locks in consistent order
+    candidate_program_ids = set()
+    for _, row in df.iterrows():
+        p_id_raw = row.get("program_id")
+        if p_id_raw and str(p_id_raw).strip().isdigit():
+            candidate_program_ids.add(int(str(p_id_raw).strip()))
+        else:
+            p_ref = str(row.get("program_name") or "").strip()
+            y_val = parse_academic_year(row.get("admission_year"))
+            if p_ref and y_val:
+                prog = resolve_program(p_ref, ctx["program_map"], y_val)
+                if prog and prog.id:
+                    candidate_program_ids.add(prog.id)
 
     accepted_clean: List[Student] = []
     accepted_with_warnings: List[Student] = []
     rejected_rows: List[Dict[str, Any]] = []
     affected_program_ids = set()
 
-    for _, row in df.iterrows():
-        row_dict = row.to_dict()
-        flags = validate_student_row(row_dict, ctx)
-        is_rejected = any(f["rule_code"] in HARD_REJECT_RULE_CODES for f in flags)
+    with atomic_admission_scope(session, program_ids=sorted(list(candidate_program_ids))):
+        # Recalculate capacity within protected transaction after acquiring locks
+        batch_tracker = BatchCapacityTracker(session=session, institution_id=inst_id)
 
-        if is_rejected:
-            reasons = "; ".join(f["message"] for f in flags if f["rule_code"] in HARD_REJECT_RULE_CODES)
-            rejected_rows.append({**row_dict, "rejection_reason": reasons})
-        else:
-            prog_name_key = str(row_dict.get("program_name") or row_dict.get("program_id") or "").strip().lower()
-            try:
-                adm_yr = int(row_dict.get("admission_year") or 2024)
-            except (ValueError, TypeError):
-                adm_yr = 2024
-            program = (
-                ctx["program_map"].get((prog_name_key, adm_yr))
-                or ctx["program_map"].get(prog_name_key)
-                or ctx["program_map"].get((prog_name_key.replace(" engineering", ""), adm_yr))
-                or ctx["program_map"].get(prog_name_key.replace(" engineering", ""))
-                or ctx["program_map"].get((f"{prog_name_key} engineering", adm_yr))
-                or ctx["program_map"].get(f"{prog_name_key} engineering")
-            )
-            prog_id = program.id if program else None
+        for _, row in df.iterrows():
+            row_dict = row.to_dict()
+            flags = validate_student_row(row_dict, ctx)
+            is_rejected = any(f["rule_code"] in HARD_REJECT_RULE_CODES for f in flags)
 
-            # Capacity Guard for new admissions: do not silently accept invalid new admissions
-            adm_type = str(row_dict.get("admission_type") or "REGULAR").strip().upper() or "REGULAR"
-            if prog_id and prog_id in batch_intake_map:
-                p_info = batch_intake_map[prog_id]
-                curr_reg = p_info["enrolled_regular"] + batch_allocated[prog_id]["REGULAR"]
-                curr_super = p_info["enrolled_supernumerary"] + batch_allocated[prog_id]["SUPERNUMERARY"]
-                curr_total = curr_reg + curr_super
-                approved_lim = p_info["approved_intake"]
-                super_lim = p_info["permitted_supernumerary"]
-                total_lim = p_info["total_capacity"]
-
-                is_quota_rejected = False
-                quota_reason = ""
-                if adm_type == "REGULAR":
-                    if curr_reg >= approved_lim:
-                        is_quota_rejected = True
-                        quota_reason = f"Regular intake capacity exceeded for program '{program.name}' ({approved_lim} sanctioned). New admissions over approved capacity are rejected."
-                    elif curr_total >= total_lim:
-                        is_quota_rejected = True
-                        quota_reason = f"Total program capacity exceeded for program '{program.name}' ({total_lim} total capacity). New admissions over capacity are rejected."
-                elif adm_type == "SUPERNUMERARY":
-                    if curr_super >= super_lim:
-                        is_quota_rejected = True
-                        quota_reason = f"Supernumerary quota capacity exceeded for program '{program.name}' ({super_lim} permitted). New admissions over permitted quota are rejected."
-                    elif curr_total >= total_lim:
-                        is_quota_rejected = True
-                        quota_reason = f"Total program capacity exceeded for program '{program.name}' ({total_lim} total capacity). New admissions over capacity are rejected."
-
-                if is_quota_rejected:
-                    rejected_rows.append({**row_dict, "rejection_reason": quota_reason})
+            if is_rejected:
+                reasons = "; ".join(f["message"] for f in flags if f["rule_code"] in HARD_REJECT_RULE_CODES)
+                rejected_rows.append({**row_dict, "rejection_reason": reasons})
+            else:
+                prog_name_key = str(row_dict.get("program_name") or row_dict.get("program_id") or "").strip()
+                raw_adm_year = row_dict.get("admission_year")
+                parsed_year = parse_academic_year(raw_adm_year)
+                if parsed_year is None:
+                    rejected_rows.append({**row_dict, "rejection_reason": "Missing or invalid admission_year."})
                     continue
 
-                batch_allocated[prog_id][adm_type] += 1
+                program = resolve_program(prog_name_key, ctx["program_map"], parsed_year)
+                prog_id = program.id if program else None
+                adm_type = str(row_dict.get("admission_type") or "REGULAR").strip().upper() or "REGULAR"
 
-            stu = Student(
-                apaar_id=str(row_dict.get("apaar_id")).strip(),
-                institution_id=inst_id,
-                program_id=prog_id,
-                student_id=str(row_dict.get("student_id")).strip(),
-                full_name=str(row_dict.get("full_name")).strip(),
-                dob=str(row_dict.get("dob")).strip(),
-                gender=str(row_dict.get("gender") or "Other").strip() or "Other",
-                category=str(row_dict.get("category") or "GENERAL").strip() or "GENERAL",
-                admission_type=str(row_dict.get("admission_type") or "REGULAR").strip() or "REGULAR",
-                is_nri=str(row_dict.get("is_nri", "")).lower() in ["true", "1", "yes"],
-                oci_status=str(row_dict.get("oci_status", "")).lower() in ["true", "1", "yes"],
-                is_foreign_national=str(row_dict.get("is_foreign_national", "")).lower() in ["true", "1", "yes"],
-                nationality=str(row_dict.get("nationality") or "Indian").strip() or "Indian",
-                admission_year=int(row_dict.get("admission_year") or 2024),
-                mode=str(row_dict.get("mode") or "FULL_TIME").strip() or "FULL_TIME",
-                status="ACTIVE",
-                consent_level=2 if str(row_dict.get("consent_given", "")).lower() in ["true", "1", "yes", "2"] else 0,
-                consent_timestamp=utc_now() if str(row_dict.get("consent_given", "")).lower() in ["true", "1", "yes", "2"] else None,
-                created_at=utc_now(),
-            )
-            session.add(stu)
-            session.commit()
-            session.refresh(stu)
+                if not prog_id:
+                    rejected_rows.append({**row_dict, "rejection_reason": f"Program '{prog_name_key}' not found for academic year {parsed_year}."})
+                    continue
 
-            # Generate Ed25519 record signature
-            stu.record_signature = sign_record(stu, session)
-            session.add(stu)
-            session.commit()
+                is_nri_val = str(row_dict.get("is_nri", "")).lower() in ["true", "1", "yes"]
+                oci_val = str(row_dict.get("oci_status", "")).lower() in ["true", "1", "yes"]
+                is_fn_val = str(row_dict.get("is_foreign_national", "")).lower() in ["true", "1", "yes"]
+                cat_val = str(row_dict.get("category") or "GENERAL").strip() or "GENERAL"
+                scheme_or_cat = "NRI" if is_nri_val else ("FN" if is_fn_val else ("OCI" if oci_val else cat_val))
 
-            if prog_id:
-                affected_program_ids.add(prog_id)
+                cap_result = validate_admission_capacity(
+                    session=session,
+                    program_id=prog_id,
+                    admission_type=adm_type,
+                    target_status="ACTIVE",
+                    admission_year=parsed_year,
+                    category=cat_val,
+                    is_nri=is_nri_val,
+                    oci_status=oci_val,
+                    is_foreign_national=is_fn_val,
+                    batch_tracker=batch_tracker,
+                    allow_override=False,
+                )
+                if not cap_result.allowed:
+                    rejected_rows.append({**row_dict, "rejection_reason": cap_result.reason})
+                    continue
 
-            if flags:
-                for f in flags:
-                    flag_record = ValidationFlag(
-                        institution_id=inst_id,
-                        program_id=prog_id,
-                        student_id=stu.id,
-                        rule_code=f["rule_code"],
-                        severity=f["severity"],
-                        message=f["message"],
-                        recommended_action=f["recommended_action"],
-                        status="OPEN",
-                        created_at=utc_now(),
-                    )
-                    session.add(flag_record)
-                session.commit()
-                accepted_with_warnings.append(stu)
-            else:
-                accepted_clean.append(stu)
+                batch_tracker.accept(prog_id, adm_type, parsed_year, scheme_or_category=scheme_or_cat)
+
+                stu = Student(
+                    apaar_id=str(row_dict.get("apaar_id")).strip(),
+                    institution_id=inst_id,
+                    program_id=prog_id,
+                    student_id=str(row_dict.get("student_id")).strip(),
+                    full_name=str(row_dict.get("full_name")).strip(),
+                    dob=str(row_dict.get("dob")).strip(),
+                    gender=str(row_dict.get("gender") or "Other").strip() or "Other",
+                    category=cat_val,
+                    admission_type=adm_type,
+                    is_nri=is_nri_val,
+                    oci_status=oci_val,
+                    is_foreign_national=is_fn_val,
+                    nationality=str(row_dict.get("nationality") or "Indian").strip() or "Indian",
+                    admission_year=parsed_year,
+                    mode=str(row_dict.get("mode") or "FULL_TIME").strip() or "FULL_TIME",
+                    status="ACTIVE",
+                    allocation_id=cap_result.allocation_id,
+                    consent_level=2 if str(row_dict.get("consent_given", "")).lower() in ["true", "1", "yes", "2"] else 0,
+                    consent_timestamp=utc_now() if str(row_dict.get("consent_given", "")).lower() in ["true", "1", "yes", "2"] else None,
+                    created_at=utc_now(),
+                )
+                session.add(stu)
+                session.flush()
+
+                # Generate Ed25519 record signature
+                stu.record_signature = sign_record(stu, session)
+                session.add(stu)
+
+                if prog_id:
+                    affected_program_ids.add(prog_id)
+
+                if flags:
+                    for f in flags:
+                        flag_record = ValidationFlag(
+                            institution_id=inst_id,
+                            program_id=prog_id,
+                            student_id=stu.id,
+                            rule_code=f["rule_code"],
+                            severity=f["severity"],
+                            message=f["message"],
+                            recommended_action=f["recommended_action"],
+                            status="OPEN",
+                            created_at=utc_now(),
+                        )
+                        session.add(flag_record)
+                    accepted_with_warnings.append(stu)
+                else:
+                    accepted_clean.append(stu)
+
+        # Log action to audit chain within atomic transaction
+        log_action(
+            session=session,
+            user=user,
+            action="CSV_UPLOAD",
+            entity="INSTITUTION",
+            entity_id=str(inst_id),
+            details=f"Processed CSV upload ({file.filename}): {len(accepted_clean)} clean, {len(accepted_with_warnings)} with warnings, {len(rejected_rows)} rejected",
+            commit=False,
+        )
+
+        # Atomically commit all accepted students, flags, and audit log
+        session.commit()
 
     # Re-evaluate intake for affected programs
     for pid in affected_program_ids:
@@ -1129,16 +1248,6 @@ async def process_csv_upload(
         ERROR_CSVS[inst_id] = err_buffer.getvalue()
     else:
         ERROR_CSVS.pop(inst_id, None)
-
-    # Log action to audit chain
-    log_action(
-        session=session,
-        user=user,
-        action="CSV_UPLOAD",
-        entity="INSTITUTION",
-        entity_id=str(inst_id),
-        details=f"Processed CSV upload ({file.filename}): {len(accepted_clean)} clean, {len(accepted_with_warnings)} with warnings, {len(rejected_rows)} rejected",
-    )
 
     return templates.TemplateResponse(
         request=request,
@@ -1179,3 +1288,113 @@ def program_intake_check(
 ):
     """AJAX endpoint for live seat meter in student forms."""
     return intake_check(program_id, session, target_admission_type=admission_type)
+
+
+@router.post("/overrides/request")
+def request_override(
+    program_id: int = Form(...),
+    academic_year: str = Form(...),
+    authorization_category: str = Form(...),
+    approval_ref: str = Form(...),
+    issuing_authority: str = Form(...),
+    document_ref: str = Form(...),
+    seat_buffer: int = Form(1),
+    justification: str = Form(...),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("INSTITUTION")),
+):
+    """Submit a draft regulatory override request for AICTE approval."""
+    from app.override import create_regulatory_override
+    override = create_regulatory_override(
+        session=session,
+        user=user,
+        program_id=program_id,
+        academic_year=academic_year,
+        authorization_category=authorization_category,
+        approval_ref=approval_ref,
+        issuing_authority=issuing_authority,
+        document_ref=document_ref,
+        seat_buffer=seat_buffer,
+        justification=justification,
+    )
+    return {
+        "status": "submitted",
+        "override_id": override.id,
+        "verification_status": override.verification_status,
+        "message": "Regulatory override request submitted successfully in DRAFT status for AICTE review.",
+    }
+
+
+@router.post("/reconciliation/run")
+def run_institution_reconciliation(
+    academic_year: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("INSTITUTION")),
+):
+    """
+    Trigger historical seat allocation reconciliation for the logged-in institution.
+    Non-destructive: evaluates existing enrolments against approved capacities without deleting records.
+    """
+    from app.reconciliation import reconcile_institution, get_reconciliation_summary
+    results = reconcile_institution(
+        session=session,
+        institution_id=user.institution_id,
+        academic_year=academic_year,
+        user=user,
+        commit=True,
+    )
+    summary = get_reconciliation_summary(
+        session=session,
+        institution_id=user.institution_id,
+        academic_year=academic_year,
+    )
+    return {
+        "status": "success",
+        "message": f"Historical reconciliation completed for institution ID {user.institution_id}.",
+        "academic_year": academic_year or "ALL",
+        "evaluations_count": len(results),
+        "violations_count": summary["total_violations"],
+        "excess_seats_count": summary["total_excess_seats"],
+        "summary": summary,
+    }
+
+
+@router.get("/reconciliation/report")
+def get_institution_reconciliation_report(
+    academic_year: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("INSTITUTION")),
+):
+    """
+    Retrieve historical seat allocation reconciliation report for the logged-in institution.
+    """
+    from app.reconciliation import get_reconciliation_summary
+    return get_reconciliation_summary(
+        session=session,
+        institution_id=user.institution_id,
+        academic_year=academic_year,
+    )
+
+
+@router.get("/reconciliation/export")
+def export_institution_reconciliation_csv(
+    academic_year: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("INSTITUTION")),
+):
+    """
+    Download CSV export of historical reconciliation for the logged-in institution.
+    """
+    from app.reconciliation import export_reconciliation_csv_string
+    csv_data = export_reconciliation_csv_string(
+        session=session,
+        institution_id=user.institution_id,
+        academic_year=academic_year,
+    )
+    filename = f"reconciliation_institution_{user.institution_id}_{academic_year or 'all'}.csv"
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+

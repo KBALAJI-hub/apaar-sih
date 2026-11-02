@@ -1451,3 +1451,182 @@ def state_summary_report(
         ["state", "institutions", "enrolment", "approved_intake", "open_flags"],
         rows,
     )
+
+
+# ---------------------------------------------------------------------------
+# Regulatory Admission Overrides Management (Phase 4)
+# ---------------------------------------------------------------------------
+
+@router.post("/overrides/{override_id}/approve")
+def approve_override_endpoint(
+    override_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("AICTE_ADMIN")),
+):
+    """Approve a regulatory admission override (AICTE_ADMIN only)."""
+    from app.override import approve_regulatory_override
+    override = approve_regulatory_override(session=session, user=user, override_id=override_id)
+    return {
+        "status": "success",
+        "override_id": override.id,
+        "verification_status": override.verification_status,
+        "approved_by_user_id": override.approved_by_user_id,
+        "approved_at": override.approved_at.isoformat() if override.approved_at else None,
+    }
+
+
+@router.post("/overrides/{override_id}/reject")
+def reject_override_endpoint(
+    override_id: int,
+    reason: Optional[str] = Form(None),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("AICTE_ADMIN")),
+):
+    """Reject a regulatory admission override (AICTE_ADMIN only)."""
+    from app.override import reject_regulatory_override
+    override = reject_regulatory_override(session=session, user=user, override_id=override_id, reason=reason)
+    return {
+        "status": "rejected",
+        "override_id": override.id,
+        "verification_status": override.verification_status,
+        "rejection_reason": override.rejection_reason,
+    }
+
+
+@router.post("/overrides/{override_id}/revoke")
+def revoke_override_endpoint(
+    override_id: int,
+    reason: Optional[str] = Form(None),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("AICTE_ADMIN")),
+):
+    """Revoke an existing regulatory admission override (AICTE_ADMIN only)."""
+    from app.override import revoke_regulatory_override
+    override = revoke_regulatory_override(session=session, user=user, override_id=override_id, reason=reason)
+    return {
+        "status": "revoked",
+        "override_id": override.id,
+        "verification_status": override.verification_status,
+        "rejection_reason": override.rejection_reason,
+    }
+
+
+@router.post("/overrides/create")
+def create_override_endpoint(
+    program_id: int = Form(...),
+    academic_year: str = Form(...),
+    authorization_category: str = Form(...),
+    approval_ref: str = Form(...),
+    issuing_authority: str = Form(...),
+    document_ref: str = Form(...),
+    seat_buffer: int = Form(1),
+    justification: str = Form(...),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("AICTE_ADMIN")),
+):
+    """Create a verified regulatory override directly by AICTE_ADMIN."""
+    from app.override import create_regulatory_override
+    override = create_regulatory_override(
+        session=session,
+        user=user,
+        program_id=program_id,
+        academic_year=academic_year,
+        authorization_category=authorization_category,
+        approval_ref=approval_ref,
+        issuing_authority=issuing_authority,
+        document_ref=document_ref,
+        seat_buffer=seat_buffer,
+        justification=justification,
+    )
+    return {
+        "status": "created",
+        "override_id": override.id,
+        "verification_status": override.verification_status,
+        "seat_buffer": override.seat_buffer,
+    }
+
+
+@router.post("/reconciliation/run")
+def run_admin_reconciliation(
+    institution_id: Optional[int] = Query(default=None),
+    academic_year: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("AICTE_ADMIN")),
+):
+    """
+    Trigger historical seat allocation reconciliation system-wide or for a specific institution (AICTE_ADMIN only).
+    """
+    from app.reconciliation import reconcile_institution, reconcile_all_institutions, get_reconciliation_summary
+    if institution_id:
+        results = reconcile_institution(
+            session=session,
+            institution_id=institution_id,
+            academic_year=academic_year,
+            user=user,
+            commit=True,
+        )
+    else:
+        results = reconcile_all_institutions(
+            session=session,
+            academic_year=academic_year,
+            user=user,
+            commit=True,
+        )
+
+    summary = get_reconciliation_summary(
+        session=session,
+        institution_id=institution_id,
+        academic_year=academic_year,
+    )
+    return {
+        "status": "success",
+        "message": f"Historical reconciliation completed. Evaluated {summary['programs_evaluated']} programs across {summary['institutions_evaluated']} institutions.",
+        "evaluations_count": len(results),
+        "violations_count": summary["total_violations"],
+        "excess_seats_count": summary["total_excess_seats"],
+        "summary": summary,
+    }
+
+
+@router.get("/reconciliation/report")
+def get_admin_reconciliation_report(
+    institution_id: Optional[int] = Query(default=None),
+    academic_year: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("AICTE_ADMIN")),
+):
+    """
+    Retrieve aggregated historical reconciliation audit report (AICTE_ADMIN only).
+    """
+    from app.reconciliation import get_reconciliation_summary
+    return get_reconciliation_summary(
+        session=session,
+        institution_id=institution_id,
+        academic_year=academic_year,
+    )
+
+
+@router.get("/reconciliation/export")
+def export_admin_reconciliation_csv(
+    institution_id: Optional[int] = Query(default=None),
+    academic_year: Optional[str] = Query(default=None),
+    session: Session = Depends(get_session),
+    user: User = Depends(require_role("AICTE_ADMIN")),
+):
+    """
+    Download CSV export of historical seat allocation reconciliation audit (AICTE_ADMIN only).
+    """
+    from app.reconciliation import export_reconciliation_csv_string
+    csv_data = export_reconciliation_csv_string(
+        session=session,
+        institution_id=institution_id,
+        academic_year=academic_year,
+    )
+    inst_tag = f"inst_{institution_id}" if institution_id else "all_institutions"
+    filename = f"reconciliation_audit_{inst_tag}_{academic_year or 'all'}.csv"
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+

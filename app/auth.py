@@ -166,8 +166,17 @@ def require_role(*roles: str):
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
-    """Render the login form."""
+def login_page(
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """Render the login form. If already authenticated and not switching accounts, redirect to role dashboard."""
+    if not request.query_params.get("switch"):
+        user = get_current_user(request, session)
+        if user:
+            dest = ROLE_REDIRECTS.get(user.role)
+            if dest:
+                return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
     return templates.TemplateResponse(request=request, name="login.html")
 
 
@@ -228,9 +237,36 @@ async def login(
     )
 
     # Role-based redirect
-    redirect_url = ROLE_REDIRECTS.get(user.role, "/")
+    dashboard_url = ROLE_REDIRECTS.get(user.role, "/")
+    redirect_url = dashboard_url
+
     if next_param and str(next_param).startswith("/") and not str(next_param).startswith("//"):
-        redirect_url = str(next_param)
+        target = str(next_param).strip()
+        # Generic /verify, /, or /login should never hijack non-verifiers away from their dashboard
+        if target in ("/verify", "/verify/", "/", "/login"):
+            if user.role == "VERIFIER":
+                redirect_url = "/verify"
+            else:
+                redirect_url = dashboard_url
+        elif user.role == "AICTE_ADMIN":
+            if target.startswith("/aicte") or target.startswith("/verify/record") or target.startswith("/certificate"):
+                redirect_url = target
+            else:
+                redirect_url = dashboard_url
+        elif user.role == "INSTITUTION":
+            if target.startswith("/institution") or target.startswith("/verify/record") or target.startswith("/certificate"):
+                redirect_url = target
+            else:
+                redirect_url = dashboard_url
+        elif user.role == "STUDENT":
+            if target.startswith("/student"):
+                redirect_url = target
+            else:
+                redirect_url = dashboard_url
+        elif user.role == "VERIFIER":
+            redirect_url = target
+        else:
+            redirect_url = dashboard_url
 
     if is_json:
         response = JSONResponse(

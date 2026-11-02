@@ -6,8 +6,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.database import create_db_and_tables, check_db_connection
-from app.auth import router as auth_router
+from sqlmodel import Session
+from fastapi import Depends, status
+from app.database import create_db_and_tables, check_db_connection, get_session
+from app.auth import router as auth_router, get_current_user, ROLE_REDIRECTS
 # Import routers from app.routers
 from app.routers import institution, aicte, verify, api
 
@@ -61,8 +63,17 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 
 
 @app.get("/", response_class=HTMLResponse)
-def read_root(request: Request):
-    """GET / route that renders index.html."""
+def read_root(
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """GET / route that renders index.html or redirects authenticated users to their dashboard."""
+    if not request.query_params.get("landing"):
+        user = get_current_user(request, session)
+        if user:
+            dest = ROLE_REDIRECTS.get(user.role)
+            if dest:
+                return RedirectResponse(url=dest, status_code=status.HTTP_303_SEE_OTHER)
     return templates.TemplateResponse(request=request, name="index.html")
 
 

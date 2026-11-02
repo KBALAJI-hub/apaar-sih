@@ -11,8 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session, select
 
 from app.audit import log_action
+from app.concurrency import atomic_admission_scope
 from app.database import get_session
-from app.models import Institution, Program, Student, ValidationFlag, utc_now
+from app.models import Institution, Program, Student, ValidationFlag, RegulatoryOverride, utc_now
 from app.security import sign_record
 from app.validation import (
     build_validation_context,
@@ -20,6 +21,10 @@ from app.validation import (
     validate_program_intake,
     validate_student_row,
     validate_override_request,
+    validate_admission_capacity,
+    BatchCapacityTracker,
+    resolve_program,
+    parse_academic_year,
     HARD_REJECT_RULE_CODES,
 )
 
@@ -68,7 +73,7 @@ class StudentBulkItem(BaseModel):
     category: str = Field(default="GENERAL", description="Social category (GENERAL, OBC, SC, ST, EWS)", examples=["GENERAL"])
     program_name: Optional[str] = Field(default=None, description="Exact approved program title", examples=["B.Tech Computer Science and Engineering"])
     program_id: Optional[int] = Field(default=None, description="Approved program ID if known", examples=[1])
-    admission_year: int = Field(default=2024, description="Academic admission year", examples=[2024])
+    admission_year: Optional[Any] = Field(default=None, description="Academic admission year", examples=[2024])
     admission_type: str = Field(default="REGULAR", description="REGULAR or SUPERNUMERARY", examples=["REGULAR"])
     is_nri: bool = Field(default=False, description="NRI quota flag", examples=[False])
     oci_status: bool = Field(default=False, description="Overseas Citizen of India status", examples=[False])
@@ -76,6 +81,7 @@ class StudentBulkItem(BaseModel):
     nationality: str = Field(default="Indian", description="Country of citizenship", examples=["Indian"])
     mode: str = Field(default="FULL_TIME", description="Mode of education (FULL_TIME, PART_TIME, ODL)", examples=["FULL_TIME"])
     consent_given: bool = Field(default=True, description="Student DigiLocker verification consent", examples=[True])
+    override_id: Optional[int] = Field(default=None, description="Regulatory override record ID if program is at capacity", examples=[1])
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -134,6 +140,7 @@ class StudentUpdateItem(BaseModel):
     mode: Optional[str] = Field(None, description="Mode of study", examples=["FULL_TIME"])
     status: Optional[str] = Field(None, description="Enrollment status (ACTIVE, INACTIVE, SUSPENDED, GRADUATED)", examples=["ACTIVE"])
     consent_level: Optional[int] = Field(None, ge=0, le=2, description="Consent level (0=None, 1=Basic, 2=Full)", examples=[2])
+    override_id: Optional[int] = Field(None, description="Regulatory override record ID if target program is at capacity", examples=[1])
     override_justification: Optional[str] = Field(None, description="Mandatory justification text if target program is at BLOCK capacity", examples=["Special legal order variance"])
 
     model_config = ConfigDict(
@@ -229,99 +236,198 @@ def bulk_student_upload(
     # Preload validation context once
     ctx = build_validation_context(inst_id, session)
 
+    # Collect candidate program IDs and override IDs to lock in ascending order
+    candidate_program_ids = set()
+    candidate_override_ids = set()
+    for item in students:
+        if item.override_id:
+            candidate_override_ids.add(item.override_id)
+        if item.program_id:
+            try:
+                candidate_program_ids.add(int(item.program_id))
+            except (ValueError, TypeError):
+                pass
+        elif item.program_name:
+            parsed_year = parse_academic_year(item.admission_year)
+            if parsed_year:
+                prog = resolve_program(item.program_name, ctx["program_map"], parsed_year)
+                if prog and prog.id:
+                    candidate_program_ids.add(prog.id)
+
     accepted_clean_count = 0
     accepted_warning_count = 0
     rejected_count = 0
     errors: List[RowError] = []
     affected_program_ids = set()
 
-    for idx, item in enumerate(students):
-        row_dict = item.model_dump()
-        flags = validate_student_row(row_dict, ctx)
-        reject_flags = [f for f in flags if f["rule_code"] in HARD_REJECT_RULE_CODES]
+    with atomic_admission_scope(
+        session,
+        program_ids=sorted(list(candidate_program_ids)),
+        override_ids=sorted(list(candidate_override_ids)),
+    ):
+        # Recalculate capacity within protected transaction after acquiring locks
+        batch_tracker = BatchCapacityTracker(session=session, institution_id=inst_id)
 
-        if reject_flags:
-            rejected_count += 1
-            errors.append(
-                RowError(
-                    index=idx,
-                    apaar_id=item.apaar_id,
-                    student_id=item.student_id,
-                    rule_codes=[f["rule_code"] for f in reject_flags],
-                    errors=[f["message"] for f in reject_flags],
-                )
-            )
-        else:
-            # Resolve program
-            prog_name_key = str(row_dict.get("program_name") or row_dict.get("program_id") or "").strip().lower()
-            program = ctx["program_map"].get(prog_name_key)
-            prog_id = program.id if program else None
+        for idx, item in enumerate(students):
+            row_dict = item.model_dump()
+            flags = validate_student_row(row_dict, ctx)
+            reject_flags = [f for f in flags if f["rule_code"] in HARD_REJECT_RULE_CODES]
 
-            stu = Student(
-                apaar_id=item.apaar_id.strip(),
-                institution_id=inst_id,
-                program_id=prog_id,
-                student_id=item.student_id.strip(),
-                full_name=item.full_name.strip(),
-                dob=item.dob.strip(),
-                gender=item.gender,
-                category=item.category,
-                admission_type=item.admission_type,
-                is_nri=item.is_nri,
-                oci_status=item.oci_status,
-                is_foreign_national=item.is_foreign_national,
-                nationality=item.nationality.strip(),
-                admission_year=item.admission_year,
-                mode=item.mode,
-                status="ACTIVE",
-                consent_level=2 if item.consent_given else 0,
-                consent_timestamp=utc_now() if item.consent_given else None,
-                created_at=utc_now(),
-            )
-            session.add(stu)
-            session.commit()
-            session.refresh(stu)
-
-            # Generate Ed25519 digital signature
-            stu.record_signature = sign_record(stu, session)
-            session.add(stu)
-            session.commit()
-
-            if prog_id:
-                affected_program_ids.add(prog_id)
-
-            if flags:
-                accepted_warning_count += 1
-                for f in flags:
-                    flag_record = ValidationFlag(
-                        institution_id=inst_id,
-                        program_id=prog_id,
-                        student_id=stu.id,
-                        rule_code=f["rule_code"],
-                        severity=f["severity"],
-                        message=f["message"],
-                        recommended_action=f["recommended_action"],
-                        status="OPEN",
-                        created_at=utc_now(),
+            if reject_flags:
+                rejected_count += 1
+                errors.append(
+                    RowError(
+                        index=idx,
+                        apaar_id=item.apaar_id,
+                        student_id=item.student_id,
+                        rule_codes=[f["rule_code"] for f in reject_flags],
+                        errors=[f["message"] for f in reject_flags],
                     )
-                    session.add(flag_record)
-                session.commit()
+                )
             else:
-                accepted_clean_count += 1
+                # Resolve program and admission year
+                prog_ref = row_dict.get("program_id") or row_dict.get("program_name")
+                parsed_year = parse_academic_year(item.admission_year)
+                if parsed_year is None:
+                    rejected_count += 1
+                    errors.append(
+                        RowError(
+                            index=idx,
+                            apaar_id=item.apaar_id,
+                            student_id=item.student_id,
+                            rule_codes=["R9"],
+                            errors=["Missing or invalid admission_year."],
+                        )
+                    )
+                    continue
+
+                program = None
+                if item.program_id:
+                    program = ctx["program_map"].get(str(item.program_id)) or session.get(Program, item.program_id)
+                if not program and prog_ref:
+                    program = resolve_program(prog_ref, ctx["program_map"], parsed_year)
+                prog_id = program.id if program else None
+                adm_type = str(item.admission_type or "REGULAR").strip().upper() or "REGULAR"
+
+                if not prog_id:
+                    rejected_count += 1
+                    errors.append(
+                        RowError(
+                            index=idx,
+                            apaar_id=item.apaar_id,
+                            student_id=item.student_id,
+                            rule_codes=["R11"],
+                            errors=[f"Program '{prog_ref}' not found for academic year {parsed_year}."],
+                        )
+                    )
+                    continue
+
+                scheme_or_cat = "NRI" if item.is_nri else ("FN" if item.is_foreign_national else ("OCI" if item.oci_status else item.category))
+
+                cap_result = validate_admission_capacity(
+                    session=session,
+                    program_id=prog_id,
+                    admission_type=adm_type,
+                    target_status="ACTIVE",
+                    admission_year=parsed_year,
+                    category=item.category,
+                    is_nri=item.is_nri,
+                    oci_status=item.oci_status,
+                    is_foreign_national=item.is_foreign_national,
+                    batch_tracker=batch_tracker,
+                    override_id=item.override_id,
+                    allow_override=bool(item.override_id),
+                    caller_user=institution,
+                )
+                if not cap_result.allowed:
+                    rejected_count += 1
+                    errors.append(
+                        RowError(
+                            index=idx,
+                            apaar_id=item.apaar_id,
+                            student_id=item.student_id,
+                            rule_codes=cap_result.rule_codes,
+                            errors=[cap_result.reason],
+                        )
+                    )
+                    continue
+
+                batch_tracker.accept(prog_id, adm_type, parsed_year, scheme_or_category=scheme_or_cat)
+
+                stu = Student(
+                    apaar_id=item.apaar_id.strip(),
+                    institution_id=inst_id,
+                    program_id=prog_id,
+                    student_id=item.student_id.strip(),
+                    full_name=item.full_name.strip(),
+                    dob=item.dob.strip(),
+                    gender=item.gender,
+                    category=item.category,
+                    admission_type=item.admission_type,
+                    is_nri=item.is_nri,
+                    oci_status=item.oci_status,
+                    is_foreign_national=item.is_foreign_national,
+                    nationality=item.nationality.strip(),
+                    admission_year=parsed_year,
+                    mode=item.mode,
+                    status="ACTIVE",
+                    allocation_id=cap_result.allocation_id,
+                    override_id=cap_result.override_id if cap_result.is_override else None,
+                    consent_level=2 if item.consent_given else 0,
+                    consent_timestamp=utc_now() if item.consent_given else None,
+                    created_at=utc_now(),
+                )
+                session.add(stu)
+                session.flush()
+
+                if cap_result.is_override and cap_result.override_id:
+                    override_rec = session.get(RegulatoryOverride, cap_result.override_id)
+                    if override_rec:
+                        override_rec.seats_utilized += 1
+                        override_rec.updated_at = utc_now()
+                        session.add(override_rec)
+
+                # Generate Ed25519 digital signature
+                stu.record_signature = sign_record(stu, session)
+                session.add(stu)
+
+                if prog_id:
+                    affected_program_ids.add(prog_id)
+
+                if flags:
+                    accepted_warning_count += 1
+                    for f in flags:
+                        flag_record = ValidationFlag(
+                            institution_id=inst_id,
+                            program_id=prog_id,
+                            student_id=stu.id,
+                            rule_code=f["rule_code"],
+                            severity=f["severity"],
+                            message=f["message"],
+                            recommended_action=f["recommended_action"],
+                            status="OPEN",
+                            created_at=utc_now(),
+                        )
+                        session.add(flag_record)
+                else:
+                    accepted_clean_count += 1
+
+        # Hash-chained audit logging inside atomic scope
+        log_action(
+            session=session,
+            user=institution,
+            action="API_BULK_UPLOAD",
+            entity="INSTITUTION",
+            entity_id=str(inst_id),
+            details=f"API bulk upload: {accepted_clean_count} clean, {accepted_warning_count} with warnings, {rejected_count} rejected",
+            commit=False,
+        )
+
+        session.commit()
 
     # Re-evaluate intake quotas for affected programs
     for pid in affected_program_ids:
         validate_program_intake(pid, session)
-
-    # Hash-chained audit logging
-    log_action(
-        session=session,
-        user=institution,
-        action="API_BULK_UPLOAD",
-        entity="INSTITUTION",
-        entity_id=str(inst_id),
-        details=f"API bulk upload: {accepted_clean_count} clean, {accepted_warning_count} with warnings, {rejected_count} rejected",
-    )
 
     return BulkUploadResponse(
         total=len(students),
@@ -358,97 +464,157 @@ def update_student_api(
         )
 
     old_program_id = student.program_id
+    old_admission_type = student.admission_type
+    old_status = student.status
+    old_admission_year = student.admission_year
+
     target_adm_type = data.admission_type or student.admission_type
     target_status = data.status or student.status
     target_prog_id = data.program_id if data.program_id is not None else student.program_id
+    target_adm_year = data.admission_year if data.admission_year is not None else student.admission_year
 
-    # If changing academic program, admission type, or reactivating from WITHDRAWN to ACTIVE
-    seat_claim_changed = (
-        (data.program_id is not None and data.program_id != student.program_id)
-        or (data.admission_type is not None and data.admission_type != student.admission_type)
-        or (student.status != "ACTIVE" and target_status == "ACTIVE")
-    )
-
-    if seat_claim_changed:
-        target_prog = session.get(Program, target_prog_id)
-        if not target_prog or target_prog.institution_id != institution.id:
+    if target_adm_year is not None:
+        parsed_target_year = parse_academic_year(target_adm_year)
+        if parsed_target_year is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Target program ID is invalid or does not belong to this institution.",
+                detail=f"Invalid admission year '{target_adm_year}'.",
+            )
+        target_adm_year = parsed_target_year
+
+    target_prog = session.get(Program, target_prog_id)
+    if not target_prog or target_prog.institution_id != institution.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Target program ID is invalid or does not belong to this institution.",
+        )
+
+    target_cat = data.category or student.category
+    target_nri = data.is_nri if data.is_nri is not None else student.is_nri
+    target_oci = data.oci_status if data.oci_status is not None else student.oci_status
+    target_fn = data.is_foreign_national if data.is_foreign_national is not None else student.is_foreign_national
+
+    programs_to_lock = sorted(list(set(filter(None, [student.program_id, target_prog_id]))))
+
+    with atomic_admission_scope(session, program_ids=programs_to_lock, override_ids=data.override_id):
+        # Admission Capacity Enforcement (Constraint 1, 2, 3)
+        cap_result = validate_admission_capacity(
+            session=session,
+            program_id=target_prog_id,
+            admission_type=target_adm_type,
+            target_status=target_status,
+            admission_year=target_adm_year,
+            category=target_cat,
+            is_nri=target_nri,
+            oci_status=target_oci,
+            is_foreign_national=target_fn,
+            existing_student=student,
+            override_id=data.override_id,
+            override_justification=data.override_justification,
+            allow_override=True,
+            caller_user=institution,
+        )
+        if not cap_result.allowed:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=cap_result.reason,
             )
 
-        intake = intake_check(target_prog_id, session, target_admission_type=target_adm_type)
-        if intake["decision"] == "BLOCK":
-            is_valid_override, override_err = validate_override_request(
-                program=target_prog,
-                admission_type=target_adm_type,
-                justification=data.override_justification,
-                current_intake_data=intake,
-            )
-            if not is_valid_override:
-                quota_name = "Regular intake" if target_adm_type == "REGULAR" else "Supernumerary quota"
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=override_err or f"Target program {quota_name} is FULL (BLOCK). An override_justification text is strictly required.",
-                )
+        if cap_result.allocation_id is not None:
+            student.allocation_id = cap_result.allocation_id
+        if cap_result.is_override and cap_result.override_id:
+            student.override_id = cap_result.override_id
+
         if data.program_id is not None:
             student.program_id = data.program_id
 
-    # Update provided fields
-    if data.full_name is not None:
-        student.full_name = data.full_name.strip()
-    if data.dob is not None:
-        student.dob = data.dob.strip()
-    if data.gender is not None:
-        student.gender = data.gender
-    if data.category is not None:
-        student.category = data.category
-    if data.admission_year is not None:
-        student.admission_year = data.admission_year
-    if data.admission_type is not None:
-        student.admission_type = data.admission_type
-    if data.is_nri is not None:
-        student.is_nri = data.is_nri
-    if data.oci_status is not None:
-        student.oci_status = data.oci_status
-    if data.is_foreign_national is not None:
-        student.is_foreign_national = data.is_foreign_national
-    if data.nationality is not None:
-        student.nationality = data.nationality.strip()
-    if data.status is not None:
-        student.status = data.status
-    if data.consent_level is not None:
-        student.consent_level = data.consent_level
-        if data.consent_level > 0 and not student.consent_timestamp:
-            student.consent_timestamp = utc_now()
+        # Update provided fields
+        if data.full_name is not None:
+            student.full_name = data.full_name.strip()
+        if data.dob is not None:
+            student.dob = data.dob.strip()
+        if data.gender is not None:
+            student.gender = data.gender
+        if data.category is not None:
+            student.category = data.category
+        if data.admission_year is not None:
+            student.admission_year = target_adm_year
+        if data.admission_type is not None:
+            student.admission_type = data.admission_type
+        if data.is_nri is not None:
+            student.is_nri = data.is_nri
+        if data.oci_status is not None:
+            student.oci_status = data.oci_status
+        if data.is_foreign_national is not None:
+            student.is_foreign_national = data.is_foreign_national
+        if data.nationality is not None:
+            student.nationality = data.nationality.strip()
+        if data.status is not None:
+            student.status = data.status
+        if data.consent_level is not None:
+            student.consent_level = data.consent_level
+            if data.consent_level > 0 and not student.consent_timestamp:
+                student.consent_timestamp = utc_now()
 
-    student.updated_at = utc_now()
-    # Re-sign record on update
-    student.record_signature = sign_record(student, session)
-    session.add(student)
-    session.commit()
-    session.refresh(student)
+        student.updated_at = utc_now()
+        # Re-sign record on update
+        student.record_signature = sign_record(student, session)
+        session.add(student)
 
-    # Re-evaluate intake if program changed
-    if old_program_id != student.program_id:
-        if old_program_id:
+        # Consume override seat if updated under regulatory override
+        if cap_result.is_override and cap_result.override_id:
+            override_rec = session.get(RegulatoryOverride, cap_result.override_id)
+            if override_rec:
+                override_rec.seats_utilized += 1
+                override_rec.updated_at = utc_now()
+                session.add(override_rec)
+                log_action(
+                    session=session,
+                    user=institution,
+                    action="ADMISSION_OVERRIDE",
+                    entity="STUDENT",
+                    entity_id=str(student.id),
+                    details={
+                        "override_id": override_rec.id,
+                        "approval_ref": override_rec.approval_ref,
+                        "issuing_authority": override_rec.issuing_authority,
+                        "approver_id": override_rec.approved_by_user_id,
+                        "student_name": student.full_name,
+                        "apaar_id": student.apaar_id,
+                        "student_id": student.student_id,
+                        "program_id": student.program_id,
+                        "admission_year": student.admission_year,
+                        "seats_utilized": override_rec.seats_utilized,
+                        "seat_buffer": override_rec.seat_buffer,
+                    },
+                    commit=False,
+                )
+
+        # Hash-chained audit logging inside atomic scope
+        audit_details = f"API updated student {student.full_name} (Roll: {student.student_id}, APAAR: {student.apaar_id})"
+        if data.override_justification and data.override_justification.strip():
+            audit_details += f" | Intake BLOCK Override Justification: {data.override_justification.strip()}"
+
+        log_action(
+            session=session,
+            user=institution,
+            action="API_STUDENT_EDIT",
+            entity="STUDENT",
+            entity_id=str(student.id),
+            details=audit_details,
+            commit=False,
+        )
+
+        session.commit()
+        session.refresh(student)
+
+    # Re-evaluate intake if program, admission type, status, or admission year changed
+    if old_program_id != student.program_id or old_admission_type != student.admission_type or old_status != student.status or old_admission_year != student.admission_year:
+        if old_program_id and old_program_id != student.program_id:
             validate_program_intake(old_program_id, session)
         if student.program_id:
             validate_program_intake(student.program_id, session)
-
-    # Hash-chained audit logging
-    audit_details = f"API updated student {student.full_name} (Roll: {student.student_id}, APAAR: {student.apaar_id})"
-    if data.override_justification and data.override_justification.strip():
-        audit_details += f" | Intake BLOCK Override Justification: {data.override_justification.strip()}"
-
-    log_action(
-        session=session,
-        user=institution,
-        action="STUDENT_EDIT",
-        entity="STUDENT",
-        entity_id=str(student.id),
-        details=audit_details,
-    )
 
     return {
         "status": "success",
@@ -486,3 +652,84 @@ def program_intake_check_api(
     if not program:
         raise HTTPException(status_code=404, detail=f"Program with ID {program_id} not found")
     return intake_check(program_id, session, target_admission_type=admission_type)
+
+
+@router.post(
+    "/reconciliation/run",
+    summary="Run Historical Seat Allocation Reconciliation",
+    description="Evaluates all active student enrolments against approved seat allocations and sanctioned intakes for the caller institution.",
+)
+def run_institution_reconciliation_api(
+    academic_year: Optional[str] = Query(default=None, description="Optional academic year filter (e.g. 2024-25)"),
+    session: Session = Depends(get_session),
+    institution: Institution = Depends(get_institution_by_api_key),
+):
+    """Execute historical reconciliation for the caller institution via API."""
+    from app.reconciliation import reconcile_institution, get_reconciliation_summary
+    results = reconcile_institution(
+        session=session,
+        institution_id=institution.id,
+        academic_year=academic_year,
+        user=None,
+        commit=True,
+    )
+    summary = get_reconciliation_summary(
+        session=session,
+        institution_id=institution.id,
+        academic_year=academic_year,
+    )
+    return {
+        "status": "success",
+        "institution_id": institution.id,
+        "academic_year": academic_year or "ALL",
+        "evaluations_count": len(results),
+        "violations_count": summary["total_violations"],
+        "excess_seats_count": summary["total_excess_seats"],
+        "summary": summary,
+    }
+
+
+@router.get(
+    "/reconciliation/summary",
+    summary="Get Historical Reconciliation Summary",
+    description="Returns structured reconciliation metrics and violation findings for the caller institution.",
+)
+def get_institution_reconciliation_api(
+    academic_year: Optional[str] = Query(default=None, description="Optional academic year filter (e.g. 2024-25)"),
+    session: Session = Depends(get_session),
+    institution: Institution = Depends(get_institution_by_api_key),
+):
+    """Retrieve historical reconciliation summary for the caller institution."""
+    from app.reconciliation import get_reconciliation_summary
+    return get_reconciliation_summary(
+        session=session,
+        institution_id=institution.id,
+        academic_year=academic_year,
+    )
+
+
+@router.get(
+    "/reconciliation/export",
+    summary="Export Historical Reconciliation CSV",
+    description="Download historical reconciliation results in CSV format for institutional auditing.",
+)
+def export_institution_reconciliation_csv_api(
+    academic_year: Optional[str] = Query(default=None, description="Optional academic year filter (e.g. 2024-25)"),
+    session: Session = Depends(get_session),
+    institution: Institution = Depends(get_institution_by_api_key),
+):
+    """Export historical reconciliation CSV for caller institution."""
+    from fastapi.responses import Response
+    from app.reconciliation import export_reconciliation_csv_string
+    csv_data = export_reconciliation_csv_string(
+        session=session,
+        institution_id=institution.id,
+        academic_year=academic_year,
+    )
+    filename = f"reconciliation_inst_{institution.id}_{academic_year or 'all'}.csv"
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
